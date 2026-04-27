@@ -1,0 +1,341 @@
+/* PowerSight Tracker Bar — Injected Styles */
+
+#powersight-tracker-bar {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 2147483647 !important; /* max z-index */
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+  font-size: 13px !important;
+  user-select: none !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+#powersight-tracker-bar * {
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.ps-bar-inner {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 24px !important;
+  height: 44px !important;
+  padding: 0 20px !important;
+  background: linear-gradient(90deg, #0f172a, #1e293b) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Logo */
+.ps-logo {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.ps-brand {
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+/* Status */
+.ps-status {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  color: #94a3b8 !important;
+}
+
+.ps-dot {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+}
+
+.ps-dot-active {
+  background: #10b981 !important;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6) !important;
+  animation: ps-pulse 1.5s infinite !important;
+}
+
+.ps-dot-idle {
+  background: #64748b !important;
+}
+
+.ps-dot-danger {
+  background: #ef4444 !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6) !important;
+  animation: ps-pulse 0.8s infinite !important;
+}
+
+@keyframes ps-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Timer */
+.ps-timer {
+  font-family: 'Courier New', monospace !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #3b82f6 !important;
+  letter-spacing: 1px !important;
+  text-shadow: 0 0 10px rgba(59, 130, 246, 0.3) !important;
+  min-width: 90px !important;
+  text-align: center !important;
+}
+
+/* Buttons */
+.ps-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.ps-btn {
+  border: none !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  transition: all 0.15s ease !important;
+  line-height: 1 !important;
+}
+
+.ps-btn-start {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  color: white !important;
+  padding: 6px 14px !important;
+}
+
+.ps-btn-pause {
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+  color: white !important;
+  padding: 6px 14px !important;
+}
+
+.ps-btn-stop {
+  background: transparent !important;
+  border: 1px solid #ef4444 !important;
+  color: #ef4444 !important;
+  padding: 6px 12px !important;
+}
+
+.ps-btn-stop:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+}
+
+.ps-btn-home {
+  background: rgba(59, 130, 246, 0.15) !important;
+  color: #60a5fa !important;
+  padding: 6px 14px !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  font-size: 11px !important;
+}
+
+.ps-btn-home:hover {
+  background: rgba(59, 130, 246, 0.25) !important;
+}
+
+@keyframes ps-slide-down {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Minimize Toggle */
+.ps-btn-toggle {
+  background: transparent !important;
+  border: none !important;
+  color: #94a3b8 !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  padding: 4px !important;
+  margin-left: auto !important;
+}
+
+.ps-btn-toggle:hover {
+  color: white !important;
+}
+
+#powersight-tracker-bar.ps-minimized .ps-bar-inner > *:not(.ps-btn-toggle) {
+  display: none !important;
+}
+#powersight-tracker-bar.ps-minimized .ps-bar-inner {
+  width: auto !important;
+  display: inline-flex !important;
+  border-radius: 0 0 12px 0 !important;
+}
+
+/* Warning dot for face verification */
+.ps-dot-warning {
+  background: #f59e0b !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6) !important;
+  animation: ps-pulse 1s infinite !important;
+}
+
+/* ============================================================
+   Face Verification Modal
+   ============================================================ */
+
+#powersight-face-modal {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.psf-backdrop {
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(0, 0, 0, 0.88) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  animation: psf-fadeIn 0.3s ease-out !important;
+}
+
+.psf-card {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 24px !important;
+  padding: 40px !important;
+  max-width: 480px !important;
+  width: 90% !important;
+  text-align: center !important;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5) !important;
+}
+
+.psf-icon {
+  width: 80px !important;
+  height: 80px !important;
+  margin: 0 auto 20px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 2.5rem !important;
+}
+
+.psf-icon-warning {
+  background: rgba(245, 158, 11, 0.15) !important;
+  border: 2px solid rgba(245, 158, 11, 0.5) !important;
+  animation: psf-pulse 1.5s infinite !important;
+}
+
+.psf-icon-success {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border: 2px solid #10b981 !important;
+}
+
+.psf-icon-fail {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border: 2px solid #ef4444 !important;
+}
+
+.psf-title {
+  margin: 0 0 12px !important;
+  font-size: 1.5rem !important;
+  font-weight: 700 !important;
+}
+
+.psf-title-warning { color: #f59e0b !important; }
+.psf-title-scanning { color: #3b82f6 !important; font-size: 1.3rem !important; }
+.psf-title-success { color: #10b981 !important; }
+.psf-title-fail { color: #ef4444 !important; }
+
+.psf-desc {
+  color: #94a3b8 !important;
+  margin: 0 0 16px !important;
+  line-height: 1.6 !important;
+  font-size: 0.9rem !important;
+}
+
+.psf-countdown {
+  font-size: 3.5rem !important;
+  font-weight: 700 !important;
+  font-family: 'Courier New', monospace !important;
+  color: #f59e0b !important;
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.4) !important;
+  margin: 8px 0 !important;
+}
+
+.psf-paused {
+  color: #64748b !important;
+  font-size: 0.85rem !important;
+  margin: 12px 0 0 !important;
+}
+
+.psf-score {
+  color: #64748b !important;
+  font-size: 0.8rem !important;
+  margin: 8px 0 0 !important;
+}
+
+/* Video Container */
+.psf-video-container {
+  position: relative !important;
+  margin-bottom: 20px !important;
+  display: inline-block !important;
+}
+
+.psf-video-container video {
+  width: 100% !important;
+  max-width: 320px !important;
+  border-radius: 16px !important;
+  border: 2px solid #3b82f6 !important;
+  box-shadow: 0 0 30px rgba(59, 130, 246, 0.3) !important;
+}
+
+.psf-video-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: 16px !important;
+  background: linear-gradient(transparent 40%, rgba(59, 130, 246, 0.1)) !important;
+  pointer-events: none !important;
+}
+
+.psf-scan-line {
+  position: absolute !important;
+  left: 10% !important;
+  right: 10% !important;
+  height: 2px !important;
+  background: #3b82f6 !important;
+  box-shadow: 0 0 10px #3b82f6 !important;
+  animation: psf-scanLine 2s ease-in-out infinite !important;
+  top: 20% !important;
+}
+
+@keyframes psf-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes psf-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+}
+
+@keyframes psf-scanLine {
+  0% { top: 10%; }
+  50% { top: 80%; }
+  100% { top: 10%; }
+}

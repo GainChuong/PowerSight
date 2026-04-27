@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 20px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .header h1 {
+      font-size: 16px;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .timer-display {
+      text-align: center;
+      font-family: 'Courier New', monospace;
+      font-size: 36px;
+      font-weight: bold;
+      color: #3b82f6;
+      margin: 16px 0;
+      text-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    }
+    .status {
+      text-align: center;
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-active { background: #10b981; }
+    .dot-idle { background: #64748b; }
+    .dot-danger { background: #ef4444; }
+    .dot-warning { background: #f59e0b; }
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .btn {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-start { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+    .btn-pause { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+    .btn-stop { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
+    .btn-stop:hover { background: rgba(239,68,68,0.1); }
+    .btn-home {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(59,130,246,0.15);
+      color: #60a5fa;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      border: 1px solid rgba(59,130,246,0.3);
+    }
+    .btn-home:hover { background: rgba(59,130,246,0.25); }
+    .info {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+    }
+    .violation-msg {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: #fca5a5;
+      text-align: center;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>
+      <line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+      <line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
+    </svg>
+    <h1>PowerSight Tracker</h1>
+  </div>
+
+  <div class="violation-msg" id="violation-msg">
+    ⚠️ Trang web hiện tại không được phép! Timer đã tạm dừng.
+  </div>
+
+  <div class="timer-display" id="timer">00:00:00</div>
+
+  <div class="status" id="status">
+    <span class="dot dot-idle" id="dot"></span>
+    <span id="status-text">Chưa bắt đầu</span>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-start" id="btn-start">▶ Bắt đầu</button>
+    <button class="btn btn-pause" id="btn-pause" style="display:none">⏸ Dừng</button>
+    <button class="btn btn-stop" id="btn-stop">⏹ Kết thúc</button>
+  </div>
+
+  <button class="btn-home" id="btn-home">🏠 Mở Dashboard</button>
+
+  <div class="info">
+    Thời gian làm việc được theo dõi tự động.<br>
+    Vi phạm sẽ được ghi nhận vào hệ thống.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
