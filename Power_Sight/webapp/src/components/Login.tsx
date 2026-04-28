@@ -2,78 +2,90 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { ScanFace, KeyRound, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound } from 'lucide-react';
+
+const EMPLOYEE_ID = 'EM001';
 
 export default function Login() {
   const { login } = useAuth();
-  const [employeeId, setEmployeeId] = useState('EMP-2026');
-  const [password, setPassword] = useState('');
-  
+
+  const [password, setPassword]                  = useState('');
+
   // Face registration state
-  const [faceRegistered, setFaceRegistered] = useState(false);
-  const [registrationPhase, setRegistrationPhase] = useState<'checking' | 'register' | 'capturing' | 'processing' | 'done'>('checking');
-  const [registrationError, setRegistrationError] = useState('');
-  const [modelsLoading, setModelsLoading] = useState(true);
-  
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [faceRegistered, setFaceRegistered]     = useState(false);
+  const [phase, setPhase]                        = useState<'checking' | 'register' | 'capturing' | 'processing' | 'done'>('checking');
+  const [error, setError]                        = useState('');
+  const [modelsLoading, setModelsLoading]        = useState(true);
+  const [loginLoading, setLoginLoading]          = useState(false);
+
+  const videoRef  = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Check if face is already registered on mount
+  // ── Kiểm tra khuôn mặt đã đăng ký trong DB chưa ────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const { isFaceRegistered, loadFaceApi } = await import('@/lib/tracking/faceUtils');
-        
-        if (isFaceRegistered()) {
-          if (!cancelled) {
+        const { loadFaceApi, storeRegisteredFace } = await import('@/lib/tracking/faceUtils');
+
+        // Hỏi API face (Supabase) xem đã lưu chưa
+        const res  = await fetch(`/api/face?employeeId=${EMPLOYEE_ID}`);
+        const data = await res.json();
+
+        if (!cancelled) {
+          if (data.faceDescriptor && Array.isArray(data.faceDescriptor)) {
+            // Có trong DB → khôi phục vào localStorage để dùng khi quét
+            storeRegisteredFace(new Float32Array(data.faceDescriptor));
             setFaceRegistered(true);
-            setRegistrationPhase('done');
+            setPhase('done');
+          } else {
+            // Chưa có → hiện form đăng ký
+            setPhase('register');
           }
-        } else {
-          if (!cancelled) setRegistrationPhase('register');
         }
 
-        // Pre-load models
         await loadFaceApi();
         if (!cancelled) setModelsLoading(false);
       } catch (err) {
-        console.error('Failed to load face utils:', err);
+        console.error('[Login] Init error:', err);
         if (!cancelled) {
+          // Fallback: kiểm tra localStorage
+          const { isFaceRegistered, loadFaceApi } = await import('@/lib/tracking/faceUtils');
+          setPhase(isFaceRegistered() ? 'done' : 'register');
+          setFaceRegistered(isFaceRegistered());
+          await loadFaceApi().catch(() => {});
           setModelsLoading(false);
-          setRegistrationPhase('register');
         }
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Start webcam for registration
+  // ── Mở camera ───────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
-    setRegistrationPhase('capturing');
-    setRegistrationError('');
+    setPhase('capturing');
+    setError('');
     try {
       const { startWebcam } = await import('@/lib/tracking/faceUtils');
       if (videoRef.current) {
         const stream = await startWebcam(videoRef.current);
         streamRef.current = stream;
       }
-    } catch (err) {
-      setRegistrationError('Không thể truy cập camera. Vui lòng cấp quyền camera.');
-      setRegistrationPhase('register');
+    } catch {
+      setError('Không thể truy cập camera. Vui lòng cấp quyền camera.');
+      setPhase('register');
     }
   }, []);
 
-  // Capture face for registration
+  // ── Chụp ảnh đăng ký ────────────────────────────────────────────────────
   const captureFace = useCallback(async () => {
     if (!videoRef.current) return;
-    setRegistrationPhase('processing');
-    setRegistrationError('');
+    setPhase('processing');
+    setError('');
 
     try {
       const { detectFaceDescriptor, storeRegisteredFace, stopWebcam } = await import('@/lib/tracking/faceUtils');
-      
-      // Try up to 3 times to get a good face descriptor
+
       let descriptor: Float32Array | null = null;
       for (let i = 0; i < 3; i++) {
         descriptor = await detectFaceDescriptor(videoRef.current);
@@ -81,127 +93,162 @@ export default function Login() {
         await new Promise(r => setTimeout(r, 500));
       }
 
-      if (descriptor) {
-        storeRegisteredFace(descriptor);
-        stopWebcam(streamRef.current);
-        streamRef.current = null;
-        setFaceRegistered(true);
-        setRegistrationPhase('done');
-      } else {
-        setRegistrationError('Không phát hiện khuôn mặt. Vui lòng đảm bảo khuôn mặt rõ ràng và thử lại.');
-        setRegistrationPhase('capturing');
+      if (!descriptor) {
+        setError('Không phát hiện khuôn mặt. Vui lòng đảm bảo ánh sáng tốt và thử lại.');
+        setPhase('capturing');
+        return;
       }
+
+      // Lưu vào localStorage
+      storeRegisteredFace(descriptor);
+
+      // Lưu lên Supabase
+      const saveRes = await fetch('/api/face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: EMPLOYEE_ID, descriptor: Array.from(descriptor) }),
+      });
+      if (!saveRes.ok) {
+        console.warn('[Login] Face saved locally but not to DB:', await saveRes.text());
+      } else {
+        console.log('[Login] Face saved to Supabase successfully.');
+      }
+
+      stopWebcam(streamRef.current);
+      streamRef.current = null;
+      setFaceRegistered(true);
+      setPhase('done');
     } catch (err) {
-      setRegistrationError('Lỗi khi xử lý khuôn mặt. Vui lòng thử lại.');
-      setRegistrationPhase('capturing');
+      console.error('[Login] Capture error:', err);
+      setError('Lỗi khi xử lý khuôn mặt. Vui lòng thử lại.');
+      setPhase('capturing');
     }
   }, []);
 
-  // Cleanup on unmount
+  // ── Dọn dẹp camera khi unmount ──────────────────────────────────────────
   useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      }
-    };
+    return () => { if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop()); };
   }, []);
 
+  // ── Đăng ký lại khuôn mặt ───────────────────────────────────────────────
   const handleReRegister = async () => {
     try {
       const { clearRegisteredFace } = await import('@/lib/tracking/faceUtils');
       clearRegisteredFace();
+      // Xóa trong DB
+      await fetch('/api/face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: EMPLOYEE_ID, descriptor: null }),
+      }).catch(() => {});
       setFaceRegistered(false);
-      setRegistrationPhase('register');
+      setPhase('register');
+      setError('');
     } catch (err) {
-      console.error('Failed to clear registered face:', err);
+      console.error('[Login] Re-register error:', err);
     }
   };
 
-  const handleLogin = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    
+  // ── Đăng nhập ───────────────────────────────────────────────────────────
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoginLoading(true);
     try {
-      await document.documentElement.requestFullscreen();
-    } catch (err) {
-      console.warn("Could not enter fullscreen automatically.");
+      const res  = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: EMPLOYEE_ID }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setError(data.error || 'Mã nhân viên không hợp lệ');
+        return;
+      }
+      try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
+      login(EMPLOYEE_ID);
+    } catch {
+      setError('Lỗi kết nối. Vui lòng thử lại sau.');
+    } finally {
+      setLoginLoading(false);
     }
-    
-    login();
   };
 
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100vh',
-      width: '100vw',
-      background: 'radial-gradient(circle at center, #1e293b 0%, #0f172a 100%)',
-      position: 'relative',
-      overflow: 'hidden'
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100vh', width: '100vw',
+      background: 'radial-gradient(ellipse at 30% 40%, #1e3a5f 0%, #0f172a 60%, #0a0f1e 100%)',
+      position: 'relative', overflow: 'hidden',
     }}>
-      {/* Background decorations */}
-      <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '40vw', height: '40vw', background: 'var(--accent-glow)', filter: 'blur(100px)', borderRadius: '50%', opacity: 0.3 }} />
-      <div style={{ position: 'absolute', bottom: '-10%', right: '-10%', width: '40vw', height: '40vw', background: 'rgba(16, 185, 129, 0.2)', filter: 'blur(100px)', borderRadius: '50%', opacity: 0.3 }} />
+      {/* Background blobs */}
+      <div style={{ position: 'absolute', top: '-15%', left: '-10%', width: '45vw', height: '45vw', background: 'rgba(59,130,246,0.18)', filter: 'blur(120px)', borderRadius: '50%' }} />
+      <div style={{ position: 'absolute', bottom: '-15%', right: '-10%', width: '45vw', height: '45vw', background: 'rgba(16,185,129,0.12)', filter: 'blur(120px)', borderRadius: '50%' }} />
 
-      <div className="glass-card animate-fade-in" style={{ 
-        width: '100%', 
-        maxWidth: '480px', 
-        padding: '40px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        zIndex: 10,
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+      <div style={{
+        position: 'relative', zIndex: 10,
+        width: '100%', maxWidth: '460px',
+        background: 'rgba(15,23,42,0.85)',
+        backdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '24px', padding: '44px 40px',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        boxShadow: '0 30px 60px rgba(0,0,0,0.5)',
+        animation: 'lgFadeIn 0.4s ease-out',
       }}>
+        {/* Logo */}
         <div style={{ marginBottom: '28px', textAlign: 'center' }}>
-          <div style={{ display: 'inline-flex', padding: '12px', borderRadius: '16px', background: 'rgba(59, 130, 246, 0.1)', marginBottom: '16px' }}>
-             <ShieldCheck size={40} color="var(--accent-primary)" />
+          <div style={{ display: 'inline-flex', padding: '14px', borderRadius: '18px', background: 'rgba(59,130,246,0.12)', marginBottom: '16px', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <ShieldCheck size={40} color="#3b82f6" />
           </div>
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 'bold', margin: '0 0 8px 0', color: 'var(--text-main)' }}>PowerSight</h1>
-          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Hệ thống giám sát năng lực điện tử</p>
+          <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: '0 0 6px', color: '#fff', letterSpacing: '-0.02em' }}>PowerSight</h1>
+          <p style={{ margin: 0, color: 'rgba(255,255,255,0.45)', fontSize: '0.88rem' }}>Hệ thống giám sát năng lực điện tử</p>
         </div>
 
-        {/* Step Indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', width: '100%', justifyContent: 'center' }}>
+        {/* Bước chỉ báo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '28px' }}>
           <StepDot active={!faceRegistered} completed={faceRegistered} label="1. Đăng ký mặt" />
-          <div style={{ width: '40px', height: '2px', background: faceRegistered ? 'var(--success)' : 'rgba(255,255,255,0.15)' }} />
+          <div style={{ width: '44px', height: '2px', background: faceRegistered ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px', transition: 'background 0.4s' }} />
           <StepDot active={faceRegistered} completed={false} label="2. Đăng nhập" />
         </div>
 
-        {/* ── STEP 1: Face Registration ── */}
+        {/* ── BƯỚC 1: Đăng ký khuôn mặt ── */}
         {!faceRegistered && (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
-            
-            {registrationPhase === 'checking' && (
-              <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                <Loader size={32} color="var(--accent-primary)" style={{ animation: 'spin 1s linear infinite' }} />
-                <p style={{ color: 'var(--text-muted)', margin: 0 }}>Đang tải mô hình nhận diện...</p>
+
+            {phase === 'checking' && (
+              <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
+                <Loader size={32} color="#3b82f6" style={{ animation: 'lgSpin 1s linear infinite' }} />
+                <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: '0.9rem' }}>Đang kiểm tra dữ liệu khuôn mặt...</p>
               </div>
             )}
 
-            {registrationPhase === 'register' && (
+            {phase === 'register' && (
               <>
                 <div style={{
-                  width: '120px', height: '120px', borderRadius: '50%',
-                  border: '2px dashed var(--accent-primary)',
+                  width: '110px', height: '110px', borderRadius: '50%',
+                  border: '2px dashed rgba(59,130,246,0.5)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(59, 130, 246, 0.05)',
+                  background: 'rgba(59,130,246,0.05)',
                 }}>
-                  <ScanFace size={48} color="var(--accent-primary)" />
+                  <ScanFace size={46} color="#3b82f6" />
                 </div>
-                <h3 style={{ color: 'var(--text-main)', margin: 0, fontSize: '1.1rem' }}>Đăng ký khuôn mặt</h3>
-                <p style={{ color: 'var(--text-muted)', margin: 0, textAlign: 'center', fontSize: '0.9rem', lineHeight: 1.6 }}>
-                  Hệ thống cần ghi nhận khuôn mặt của bạn để xác minh danh tính trong khi làm việc.
+                <h3 style={{ color: '#fff', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Đăng ký khuôn mặt</h3>
+                <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, textAlign: 'center', fontSize: '0.9rem', lineHeight: 1.6 }}>
+                  Hệ thống cần ghi nhận khuôn mặt để xác minh danh tính định kỳ trong khi làm việc.
                 </p>
                 <button
                   onClick={startCamera}
-                  className="btn-primary"
                   disabled={modelsLoading}
                   style={{
                     width: '100%', padding: '14px', marginTop: '8px',
-                    opacity: modelsLoading ? 0.5 : 1,
-                    background: 'linear-gradient(135deg, var(--accent-primary), #2563eb)',
+                    background: modelsLoading ? 'rgba(59,130,246,0.3)' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                    border: 'none', borderRadius: '12px',
+                    color: 'white', fontWeight: 700, fontSize: '0.95rem',
+                    cursor: modelsLoading ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                    boxShadow: modelsLoading ? 'none' : '0 4px 20px rgba(59,130,246,0.35)',
                   }}
                 >
                   <Camera size={18} />
@@ -210,91 +257,80 @@ export default function Login() {
               </>
             )}
 
-            {(registrationPhase === 'capturing' || registrationPhase === 'processing') && (
+            {(phase === 'capturing' || phase === 'processing') && (
               <>
                 <div style={{ position: 'relative', width: '100%' }}>
                   <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
+                    ref={videoRef} autoPlay muted playsInline
                     style={{
-                      width: '100%',
-                      borderRadius: '16px',
-                      border: '2px solid var(--accent-primary)',
-                      boxShadow: '0 0 30px rgba(59, 130, 246, 0.2)',
+                      width: '100%', borderRadius: '16px',
+                      border: '2px solid #3b82f6',
+                      boxShadow: '0 0 30px rgba(59,130,246,0.25)',
                       transform: 'scaleX(-1)',
                     }}
                   />
-                  {/* Face outline guide */}
                   <div style={{
-                    position: 'absolute',
-                    top: '50%', left: '50%',
+                    position: 'absolute', top: '50%', left: '50%',
                     transform: 'translate(-50%, -50%)',
-                    width: '180px', height: '220px',
-                    border: '2px dashed rgba(59, 130, 246, 0.6)',
-                    borderRadius: '50%',
-                    pointerEvents: 'none',
+                    width: '170px', height: '210px',
+                    border: '2px dashed rgba(59,130,246,0.6)',
+                    borderRadius: '50%', pointerEvents: 'none',
                   }} />
                 </div>
-                <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.85rem', textAlign: 'center' }}>
+                <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: '0.85rem', textAlign: 'center' }}>
                   Đặt khuôn mặt vào khung tròn. Đảm bảo ánh sáng đầy đủ.
                 </p>
                 <button
                   onClick={captureFace}
-                  className="btn-primary"
-                  disabled={registrationPhase === 'processing'}
+                  disabled={phase === 'processing'}
                   style={{
                     width: '100%', padding: '14px',
-                    background: registrationPhase === 'processing' 
-                      ? 'rgba(59, 130, 246, 0.3)' 
-                      : 'linear-gradient(135deg, var(--success), #059669)',
-                    opacity: registrationPhase === 'processing' ? 0.7 : 1,
+                    background: phase === 'processing' ? 'rgba(16,185,129,0.3)' : 'linear-gradient(135deg, #10b981, #059669)',
+                    border: 'none', borderRadius: '12px',
+                    color: 'white', fontWeight: 700, fontSize: '0.95rem',
+                    cursor: phase === 'processing' ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                    boxShadow: '0 4px 20px rgba(16,185,129,0.3)',
                   }}
                 >
-                  {registrationPhase === 'processing' ? (
-                    <><Loader size={18} style={{ animation: 'spin 1s linear infinite' }} /> Đang xử lý...</>
-                  ) : (
-                    <><Camera size={18} /> Chụp ảnh đăng ký</>
-                  )}
+                  {phase === 'processing'
+                    ? <><Loader size={18} style={{ animation: 'lgSpin 1s linear infinite' }} /> Đang xử lý...</>
+                    : <><Camera size={18} /> Chụp ảnh đăng ký</>
+                  }
                 </button>
               </>
             )}
 
-            {registrationError && (
+            {error && (
               <div style={{
                 width: '100%', padding: '12px', borderRadius: '10px',
-                background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)',
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
                 display: 'flex', alignItems: 'center', gap: '8px',
                 color: '#fca5a5', fontSize: '0.85rem',
               }}>
                 <AlertCircle size={16} />
-                {registrationError}
+                {error}
               </div>
             )}
           </div>
         )}
 
-        {/* ── STEP 2: Login (after face registered) ── */}
+        {/* ── BƯỚC 2: Đăng nhập ── */}
         {faceRegistered && (
           <>
             <div style={{
-              width: '100%', padding: '12px', borderRadius: '10px', marginBottom: '20px',
-              background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)',
+              width: '100%', padding: '12px 16px', borderRadius: '10px', marginBottom: '20px',
+              background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              color: 'var(--success)', fontSize: '0.85rem',
+              color: '#10b981', fontSize: '0.85rem',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <CheckCircle size={18} />
-                Khuôn mặt đã được đăng ký
+                Khuôn mặt đã được đăng ký (EM001)
               </div>
-              <button 
-                type="button"
+              <button
                 onClick={handleReRegister}
-                style={{ 
-                  background: 'none', border: 'none', color: 'var(--accent-primary)', 
-                  fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' 
-                }}
+                style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
               >
                 Đăng ký lại
               </button>
@@ -302,50 +338,89 @@ export default function Login() {
 
             <form onSubmit={handleLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>Mã nhân viên</label>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
+                  Mã nhân viên
+                </label>
                 <div style={{ position: 'relative' }}>
-                  <UserCircle size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input 
-                    type="text" 
-                    value={employeeId}
-                    onChange={(e) => setEmployeeId(e.target.value)}
-                    style={{ width: '100%', padding: '12px 12px 12px 40px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white', outline: 'none', boxSizing: 'border-box' }}
-                    required
+                  <UserCircle size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input
+                    type="text"
+                    value={EMPLOYEE_ID}
+                    readOnly
+                    style={{
+                      width: '100%', padding: '12px 12px 12px 40px',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '10px', color: 'rgba(255,255,255,0.8)', outline: 'none',
+                      boxSizing: 'border-box', cursor: 'default',
+                    }}
                   />
                 </div>
               </div>
+
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>Mật khẩu</label>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
+                  Mật khẩu
+                </label>
                 <div style={{ position: 'relative' }}>
-                  <KeyRound size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input 
-                    type="password" 
+                  <KeyRound size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input
+                    type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    style={{ width: '100%', padding: '12px 12px 12px 40px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white', outline: 'none', boxSizing: 'border-box' }}
+                    onChange={e => setPassword(e.target.value)}
                     placeholder="••••••••"
                     required
+                    style={{
+                      width: '100%', padding: '12px 12px 12px 40px',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '10px', color: '#fff', outline: 'none',
+                      boxSizing: 'border-box',
+                    }}
                   />
                 </div>
               </div>
-              <button type="submit" className="btn-primary" style={{ width: '100%', padding: '14px', marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
-                <LogIn size={18} /> Đăng nhập
+
+              {error && (
+                <div style={{
+                  padding: '10px 14px', borderRadius: '10px',
+                  background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  color: '#fca5a5', fontSize: '0.85rem',
+                }}>
+                  <AlertCircle size={16} />{error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loginLoading}
+                style={{
+                  width: '100%', padding: '14px', marginTop: '4px',
+                  background: loginLoading ? 'rgba(59,130,246,0.4)' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                  border: 'none', borderRadius: '12px',
+                  color: 'white', fontWeight: 700, fontSize: '1rem',
+                  cursor: loginLoading ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  boxShadow: loginLoading ? 'none' : '0 4px 20px rgba(59,130,246,0.4)',
+                }}
+              >
+                {loginLoading
+                  ? <><Loader size={18} style={{ animation: 'lgSpin 1s linear infinite' }} /> Đang xác thực...</>
+                  : <><LogIn size={18} /> Đăng nhập</>
+                }
               </button>
             </form>
           </>
         )}
       </div>
 
-      <style jsx global>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+      <style>{`
+        @keyframes lgFadeIn {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
-        @keyframes ping {
-          75%, 100% {
-            transform: scale(1.5);
-            opacity: 0;
-          }
+        @keyframes lgSpin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
         }
       `}</style>
     </div>
@@ -353,15 +428,15 @@ export default function Login() {
 }
 
 function StepDot({ active, completed, label }: { active: boolean; completed: boolean; label: string }) {
-  const bg = completed ? 'var(--success)' : active ? 'var(--accent-primary)' : 'rgba(255,255,255,0.15)';
+  const color = completed ? '#10b981' : active ? '#3b82f6' : 'rgba(255,255,255,0.15)';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
       <div style={{
-        width: '10px', height: '10px', borderRadius: '50%', background: bg,
-        boxShadow: active ? `0 0 10px ${bg}` : 'none',
-        transition: 'all 0.3s',
+        width: '10px', height: '10px', borderRadius: '50%', background: color,
+        boxShadow: (active || completed) ? `0 0 10px ${color}` : 'none',
+        transition: 'all 0.4s',
       }} />
-      <span style={{ fontSize: '0.7rem', color: active || completed ? 'var(--text-main)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: '0.7rem', color: (active || completed) ? '#fff' : 'rgba(255,255,255,0.3)', whiteSpace: 'nowrap' }}>
         {label}
       </span>
     </div>

@@ -36,7 +36,7 @@ ${logsSummary}
 Dựa vào dữ liệu trên, hãy trả lời câu hỏi của người dùng. Nếu họ có vi phạm, hãy nhắc nhở nhẹ nhàng và đưa ra lời khuyên cải thiện. Nếu không có vi phạm, hãy động viên họ.`;
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.0-flash',
       systemInstruction: SYSTEM_PROMPT,
     });
 
@@ -50,11 +50,11 @@ Dựa vào dữ liệu trên, hãy trả lời câu hỏi của người dùng. 
 
     return NextResponse.json({ reply });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Gemini API Error:', error);
     return NextResponse.json({ 
       error: 'Failed to process chat message', 
-      details: error.message || String(error) 
+      details: (error as Error).message || String(error) 
     }, { status: 500 });
   }
 }

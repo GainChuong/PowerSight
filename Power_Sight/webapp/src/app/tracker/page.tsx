@@ -7,12 +7,12 @@ import { checkFacePolicy } from '@/lib/tracking/violationEngine';
 import { useTracking } from '@/context/TrackingContext';
 
 export default function TimeTracker() {
-  const { isRunning, seconds, pastSessions, startTracking, pauseTracking, stopTracking } = useTracking();
+  const { isRunning, seconds, pastSessions, trackerStats, startTracking, pauseTracking, stopTracking } = useTracking();
 
   const GOAL_SECONDS = 8 * 3600;
-  const TARGET_TASKS = 20;
-  const COMPLETED_TASKS = 14; 
-  const KPI_PERFORMANCE = 70;
+  const TARGET_TASKS = trackerStats?.targetTasks || 20;
+  const COMPLETED_TASKS = trackerStats?.completedTasks || 0; 
+  const KPI_PERFORMANCE = trackerStats?.kpiPerformance || 0;
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
@@ -21,8 +21,23 @@ export default function TimeTracker() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const hoursWorked = (seconds / 3600).toFixed(1);
-  const timeProgress = (seconds / GOAL_SECONDS) * 100;
+  const parseDurationToSeconds = (durationStr: string) => {
+    const hMatch = durationStr.match(/(\d+)h\s*(\d+)m/);
+    if (hMatch) {
+      return parseInt(hMatch[1]) * 3600 + parseInt(hMatch[2]) * 60;
+    }
+    const timeMatch = durationStr.match(/(\d+):(\d+):(\d+)/);
+    if (timeMatch) {
+      return parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]);
+    }
+    return 0;
+  };
+
+  const pastSessionsSeconds = pastSessions.reduce((acc, s) => acc + parseDurationToSeconds(s.duration), 0);
+  const totalSeconds = seconds + pastSessionsSeconds;
+  
+  const hoursWorked = (totalSeconds / 3600).toFixed(1);
+  const timeProgress = (totalSeconds / GOAL_SECONDS) * 100;
   
   const getAiFeedback = () => {
     if (KPI_PERFORMANCE >= 90) {

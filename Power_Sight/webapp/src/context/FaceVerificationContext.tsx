@@ -2,58 +2,60 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { useTracking } from './TrackingContext';
+import { useAuth } from './AuthContext';
 
-type VerificationPhase = 'idle' | 'warning' | 'scanning' | 'success' | 'fail';
+// ─── Types ────────────────────────────────────────────────────────────────────
+type VerificationPhase = 'idle' | 'notifying' | 'scanning' | 'success' | 'fail';
 
 interface FaceVerificationContextType {
   phase: VerificationPhase;
   isPausedForVerification: boolean;
-  warningCountdown: number;
   lastResult: { match: boolean; distance: number } | null;
   modelsReady: boolean;
   triggerVerification: () => void;
+  confirmVerification: () => void;
 }
 
-const FaceVerificationContext = createContext<FaceVerificationContextType | undefined>(undefined);
-
-const RANDOM_MIN_MS = 1000;  // 1 second
-const RANDOM_MAX_MS = 3000; // 3 seconds
-const RETRY_MS = 1000;       // 1 second on failure
-const WARNING_SECONDS = 5;     // 5-second countdown before scanning
+// ─── Timing Config ────────────────────────────────────────────────────────────
+const FIRST_CHECK_MS  = 5 * 1000;           // 5 giây sau khi đăng nhập (dùng để test)
+const RANDOM_MIN_MS   = 3 * 60 * 1000;      // Tối thiểu 3 phút
+const RANDOM_MAX_MS   = 8 * 60 * 1000;      // Tối đa 8 phút
+const RETRY_MS        = 60 * 1000;          // Thử lại sau 1 phút nếu thất bại
 
 function randomInterval(): number {
   return Math.floor(Math.random() * (RANDOM_MAX_MS - RANDOM_MIN_MS + 1)) + RANDOM_MIN_MS;
 }
 
+// ─── Context ──────────────────────────────────────────────────────────────────
+const FaceVerificationContext = createContext<FaceVerificationContextType | undefined>(undefined);
+
 export function FaceVerificationProvider({ children }: { children: ReactNode }) {
   const { isRunning, pauseForVerification, resumeAfterVerification } = useTracking();
+  const { isAuthenticated, employeeId } = useAuth();
 
   const [phase, setPhase] = useState<VerificationPhase>('idle');
   const [isPausedForVerification, setIsPausedForVerification] = useState(false);
-  const [warningCountdown, setWarningCountdown] = useState(WARNING_SECONDS);
   const [lastResult, setLastResult] = useState<{ match: boolean; distance: number } | null>(null);
   const [modelsReady, setModelsReady] = useState(false);
 
-  const schedulerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isRunningRef = useRef(false);
-  const phaseRef = useRef<VerificationPhase>('idle');
+  // Refs to avoid stale closures
+  const schedulerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phaseRef             = useRef<VerificationPhase>('idle');
+  const isRunningRef         = useRef(false);
+  const isAuthRef            = useRef(false);
+  const wasTimerRunningRef   = useRef(false);
+  const isFirstCheckRef      = useRef(true);
 
-  // Keep refs in sync
-  useEffect(() => {
-    isRunningRef.current = isRunning;
-  }, [isRunning]);
+  useEffect(() => { phaseRef.current = phase; },          [phase]);
+  useEffect(() => { isRunningRef.current = isRunning; },  [isRunning]);
+  useEffect(() => { isAuthRef.current = isAuthenticated; }, [isAuthenticated]);
 
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
-
-  // Load face-api models once on mount
+  // ── Load face-api models ──────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const { loadFaceApi, isFaceRegistered } = await import('@/lib/tracking/faceUtils');
+        const { loadFaceApi } = await import('@/lib/tracking/faceUtils');
         await loadFaceApi();
         if (!cancelled) setModelsReady(true);
       } catch (err) {
@@ -63,136 +65,134 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
     return () => { cancelled = true; };
   }, []);
 
-  // Clear all timers helper
-  const clearAllTimers = useCallback(() => {
+  // ── Clear scheduler ───────────────────────────────────────────────────────
+  const clearScheduler = useCallback(() => {
     if (schedulerRef.current) {
       clearTimeout(schedulerRef.current);
       schedulerRef.current = null;
     }
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
   }, []);
 
-  // Schedule next verification
-  const scheduleNext = useCallback((delayMs?: number) => {
-    clearAllTimers();
-    const delay = delayMs ?? randomInterval();
-
-    schedulerRef.current = setTimeout(() => {
-      if (!isRunningRef.current) return;
-      // Start warning phase
-      setPhase('warning');
-      setIsPausedForVerification(true);
-      setWarningCountdown(WARNING_SECONDS);
+  // ── Show notification to user ─────────────────────────────────────────────
+  const triggerNotification = useCallback(() => {
+    if (phaseRef.current !== 'idle') return;
+    wasTimerRunningRef.current = isRunningRef.current;
+    if (isRunningRef.current) {
       pauseForVerification();
+      setIsPausedForVerification(true);
+    }
+    setPhase('notifying');
+  }, [pauseForVerification]);
 
-      let countdown = WARNING_SECONDS;
-      countdownRef.current = setInterval(() => {
-        countdown -= 1;
-        setWarningCountdown(countdown);
-        if (countdown <= 0) {
-          if (countdownRef.current) clearInterval(countdownRef.current);
-          countdownRef.current = null;
-          setPhase('scanning');
-        }
-      }, 1000);
-    }, delay);
-  }, [clearAllTimers, pauseForVerification]);
+  // ── Schedule next check ───────────────────────────────────────────────────
+  const scheduleNext = useCallback((delayMs?: number) => {
+    clearScheduler();
+    const isFirst = isFirstCheckRef.current;
+    const delay = delayMs ?? (isFirst ? FIRST_CHECK_MS : randomInterval());
+    if (isFirst) isFirstCheckRef.current = false;
 
-  // When tracking starts/stops, manage scheduling
-  useEffect(() => {
-    if (isRunning && modelsReady && phase === 'idle') {
-      // Check if face is registered before scheduling
-      (async () => {
+    console.log(`[FaceVerification] Next check in ${Math.round(delay / 1000)}s`);
+
+    schedulerRef.current = setTimeout(async () => {
+      if (!isAuthRef.current) return;
+      try {
         const { isFaceRegistered } = await import('@/lib/tracking/faceUtils');
-        if (isFaceRegistered()) {
-          scheduleNext();
-        }
-      })();
-    } else if (!isRunning) {
-      clearAllTimers();
-      if (phase !== 'idle') {
+        if (!isFaceRegistered()) return;
+        triggerNotification();
+      } catch { /* ignore */ }
+    }, delay);
+  }, [clearScheduler, triggerNotification]);
+
+  // ── Start/stop scheduling based on auth state ─────────────────────────────
+  useEffect(() => {
+    if (isAuthenticated && modelsReady) {
+      isFirstCheckRef.current = true;
+      scheduleNext(FIRST_CHECK_MS);
+    } else if (!isAuthenticated) {
+      clearScheduler();
+      if (phaseRef.current !== 'idle') {
         setPhase('idle');
         setIsPausedForVerification(false);
       }
     }
-  }, [isRunning, modelsReady]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, modelsReady]);
 
-  // Handle verification result
+  // ── User clicks "Cho phép" → start scanning ───────────────────────────────
+  const confirmVerification = useCallback(() => {
+    setPhase('scanning');
+  }, []);
+
+  // ── Handle scan result ────────────────────────────────────────────────────
   const handleVerificationComplete = useCallback((result: { match: boolean; distance: number }) => {
+    console.log('[FaceVerification] Result:', result);
     setLastResult(result);
 
     if (result.match) {
+      console.log('[FaceVerification] ✅ MATCH - no violation logged');
       setPhase('success');
-      // Auto-dismiss after 2 seconds and resume
       setTimeout(() => {
         setPhase('idle');
         setIsPausedForVerification(false);
-        resumeAfterVerification();
-        scheduleNext(); // random 1-3 min
+        if (wasTimerRunningRef.current) resumeAfterVerification();
+        scheduleNext();
       }, 2000);
     } else {
+      console.log('[FaceVerification] ❌ MISMATCH - logging violation...');
       setPhase('fail');
-      // Keep paused. Schedule retry in 1 min
-      setTimeout(() => {
-        if (phaseRef.current === 'fail') {
-          scheduleNext(RETRY_MS);
-        }
-      }, 3000); // Show fail message for 3s, then go idle, then retry in 1 min
+
+      // Ghi vi phạm vào file Excel
+      const similarity = result.distance < 999 ? Math.max(0, 1 - result.distance) : 0;
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm   = (now.getMonth() + 1).toString().padStart(2, '0');
+      const dd   = now.getDate().toString().padStart(2, '0');
+      const violationPayload = {
+        employeeId: employeeId || 'EM001',
+        sessionId: `SESS_LIVE_${yyyy}${mm}${dd}`,
+        details: `Face verification failed - Similarity: ${similarity.toFixed(3)}`,
+        similarity,
+      };
+      console.log('[FaceVerification] Posting violation:', violationPayload);
+      fetch('/api/tracker/violation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(violationPayload),
+      }).then(async res => {
+        const body = await res.json();
+        console.log('[FaceVerification] Violation API response:', res.status, body);
+      }).catch(err => console.warn('[FaceVerification] Error logging violation:', err));
+
+      // Sau 3 giây xóa UI fail, giữ timer đã dừng, thử lại sau 1 phút
       setTimeout(() => {
         if (phaseRef.current === 'fail') {
           setPhase('idle');
+          scheduleNext(RETRY_MS);
         }
       }, 3000);
     }
-  }, [resumeAfterVerification, scheduleNext]);
+  }, [resumeAfterVerification, scheduleNext, employeeId]);
 
-  // Manual trigger for testing
+  // ── Manual trigger (testing) ──────────────────────────────────────────────
+
   const triggerVerification = useCallback(() => {
-    if (!isRunningRef.current || !modelsReady) return;
-    clearAllTimers();
-    setPhase('warning');
-    setIsPausedForVerification(true);
-    setWarningCountdown(WARNING_SECONDS);
-    pauseForVerification();
+    if (!modelsReady || !isAuthRef.current) return;
+    clearScheduler();
+    triggerNotification();
+  }, [modelsReady, clearScheduler, triggerNotification]);
 
-    let countdown = WARNING_SECONDS;
-    countdownRef.current = setInterval(() => {
-      countdown -= 1;
-      setWarningCountdown(countdown);
-      if (countdown <= 0) {
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        countdownRef.current = null;
-        setPhase('scanning');
-      }
-    }, 1000);
-  }, [clearAllTimers, modelsReady, pauseForVerification]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => clearAllTimers();
-  }, [clearAllTimers]);
+  useEffect(() => () => clearScheduler(), [clearScheduler]);
 
   return (
     <FaceVerificationContext.Provider
-      value={{
-        phase,
-        isPausedForVerification,
-        warningCountdown,
-        lastResult,
-        modelsReady,
-        triggerVerification,
-      }}
+      value={{ phase, isPausedForVerification, lastResult, modelsReady, triggerVerification, confirmVerification }}
     >
       {children}
-      {/* The modal reads context internally */}
       {phase !== 'idle' && (
-        <FaceVerificationModalInner
+        <FaceVerificationModal
           phase={phase}
-          warningCountdown={warningCountdown}
           lastResult={lastResult}
+          onConfirm={confirmVerification}
           onVerificationComplete={handleVerificationComplete}
         />
       )}
@@ -206,230 +206,215 @@ export function useFaceVerification() {
   return ctx;
 }
 
-// ─── Internal Modal Component ────────────────────────────────────────────────
-
+// ─── Modal Component ──────────────────────────────────────────────────────────
 interface ModalProps {
   phase: VerificationPhase;
-  warningCountdown: number;
   lastResult: { match: boolean; distance: number } | null;
+  onConfirm: () => void;
   onVerificationComplete: (result: { match: boolean; distance: number }) => void;
 }
 
-function FaceVerificationModalInner({ phase, warningCountdown, lastResult, onVerificationComplete }: ModalProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const scanAttemptedRef = useRef(false);
+function FaceVerificationModal({ phase, lastResult, onConfirm, onVerificationComplete }: ModalProps) {
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const streamRef     = useRef<MediaStream | null>(null);
+  const scannedRef    = useRef(false);
 
-  // Start webcam when scanning begins
+  // Khi chuyển sang scanning → mở camera và quét
   useEffect(() => {
-    if (phase === 'scanning' && !scanAttemptedRef.current) {
-      scanAttemptedRef.current = true;
-      let cancelled = false;
+    if (phase !== 'scanning' || scannedRef.current) return;
+    scannedRef.current = true;
+    let cancelled = false;
 
-      (async () => {
-        try {
-          const { startWebcam, detectFaceDescriptor, getStoredFace, compareFaces, stopWebcam } =
-            await import('@/lib/tracking/faceUtils');
+    (async () => {
+      try {
+        const { startWebcam, detectFaceDescriptor, getStoredFace, compareFaces, stopWebcam } =
+          await import('@/lib/tracking/faceUtils');
 
-          if (!videoRef.current || cancelled) return;
+        if (!videoRef.current || cancelled) return;
+        const stream = await startWebcam(videoRef.current);
+        streamRef.current = stream;
 
-          const stream = await startWebcam(videoRef.current);
-          streamRef.current = stream;
+        await new Promise(r => setTimeout(r, 1500)); // để camera ổn định
+        if (cancelled) { stopWebcam(stream); return; }
 
-          // Wait a moment for the camera to stabilize
-          await new Promise(r => setTimeout(r, 1500));
-          if (cancelled) { stopWebcam(stream); return; }
-
-          // Try up to 3 detections
-          let bestResult: { match: boolean; distance: number } | null = null;
-
-          for (let attempt = 0; attempt < 3; attempt++) {
-            if (cancelled) break;
-            const descriptor = await detectFaceDescriptor(videoRef.current!);
-            const stored = getStoredFace();
-
-            if (descriptor && stored) {
-              const result = compareFaces(stored, descriptor);
-              if (!bestResult || result.distance < bestResult.distance) {
-                bestResult = result;
-              }
-              if (result.match) break;
-            }
-            // Wait 500ms between attempts
-            await new Promise(r => setTimeout(r, 500));
+        let bestResult: { match: boolean; distance: number } | null = null;
+        for (let i = 0; i < 3; i++) {
+          if (cancelled) break;
+          const descriptor = await detectFaceDescriptor(videoRef.current!);
+          const stored     = getStoredFace();
+          if (descriptor && stored) {
+            const r = compareFaces(stored, descriptor);
+            if (!bestResult || r.distance < bestResult.distance) bestResult = r;
+            if (r.match) break;
           }
-
-          stopWebcam(stream);
-          streamRef.current = null;
-
-          if (!cancelled) {
-            onVerificationComplete(bestResult || { match: false, distance: 999 });
-          }
-        } catch (err) {
-          console.error('[FaceVerification] Scan error:', err);
-          if (!cancelled) {
-            onVerificationComplete({ match: false, distance: 999 });
-          }
+          await new Promise(r => setTimeout(r, 500));
         }
-      })();
 
-      return () => {
-        cancelled = true;
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(t => t.stop());
-          streamRef.current = null;
-        }
-      };
-    }
+        stopWebcam(stream);
+        streamRef.current = null;
+        if (!cancelled) onVerificationComplete(bestResult ?? { match: false, distance: 999 });
+      } catch (err) {
+        console.error('[FaceVerification] Scan error:', err);
+        if (!cancelled) onVerificationComplete({ match: false, distance: 999 });
+      }
+    })();
 
-    if (phase !== 'scanning') {
-      scanAttemptedRef.current = false;
-    }
-  }, [phase, onVerificationComplete]);
-
-  // Cleanup stream on unmount
-  useEffect(() => {
     return () => {
+      cancelled = true;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
       }
     };
+  }, [phase, onVerificationComplete]);
+
+  useEffect(() => {
+    if (phase !== 'scanning') scannedRef.current = false;
+  }, [phase]);
+
+  useEffect(() => () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
   }, []);
 
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 9999,
-      background: 'rgba(0, 0, 0, 0.85)',
-      backdropFilter: 'blur(8px)',
+      background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      animation: 'fadeIn 0.3s ease-out',
+      animation: 'fvFadeIn 0.3s ease-out',
     }}>
       <div style={{
-        background: 'rgba(30, 41, 59, 0.95)',
-        border: '1px solid rgba(255,255,255,0.15)',
-        borderRadius: '24px',
-        padding: '40px',
-        maxWidth: '480px',
-        width: '90%',
+        background: 'rgba(15, 23, 42, 0.98)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        borderRadius: '24px', padding: '40px',
+        maxWidth: '480px', width: '90%',
         textAlign: 'center',
-        boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+        boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
       }}>
-        {phase === 'warning' && (
+
+        {/* ── Thông báo – chờ người dùng xác nhận ── */}
+        {phase === 'notifying' && (
           <>
             <div style={{
               width: '80px', height: '80px', margin: '0 auto 20px',
               borderRadius: '50%',
-              background: 'rgba(245, 158, 11, 0.15)',
-              border: '2px solid rgba(245, 158, 11, 0.5)',
+              background: 'rgba(245,158,11,0.12)',
+              border: '2px solid rgba(245,158,11,0.5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              animation: 'pulse 1.5s infinite',
+              animation: 'fvPulse 1.5s infinite',
             }}>
-              <span style={{ fontSize: '2.5rem' }}>⚠️</span>
+              <span style={{ fontSize: '2.2rem' }}>🔐</span>
             </div>
-            <h2 style={{ color: '#f59e0b', margin: '0 0 12px', fontSize: '1.5rem' }}>
-              Xác minh khuôn mặt
+            <h2 style={{ color: '#f59e0b', margin: '0 0 12px', fontSize: '1.4rem' }}>
+              Xác minh danh tính
             </h2>
-            <p style={{ color: 'var(--text-muted)', margin: '0 0 24px', lineHeight: 1.6 }}>
-              Hệ thống sẽ quét khuôn mặt của bạn để xác minh danh tính.
-              <br />Vui lòng nhìn thẳng vào camera.
+            <p style={{ color: 'rgba(255,255,255,0.65)', margin: '0 0 8px', lineHeight: 1.7, fontSize: '0.95rem' }}>
+              Hệ thống yêu cầu xác minh khuôn mặt định kỳ để đảm bảo an toàn.
             </p>
-            <div style={{
-              fontSize: '3.5rem', fontWeight: 'bold', fontFamily: 'monospace',
-              color: '#f59e0b',
-              textShadow: '0 0 20px rgba(245, 158, 11, 0.4)',
-            }}>
-              {warningCountdown}
-            </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '12px' }}>
-              ⏸ Timer đã tạm dừng
+            <p style={{ color: 'rgba(255,255,255,0.45)', margin: '0 0 28px', fontSize: '0.85rem' }}>
+              ⏸ Thời gian làm việc đang tạm dừng
             </p>
+            <button
+              onClick={onConfirm}
+              style={{
+                width: '100%', padding: '14px 24px',
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                border: 'none', borderRadius: '12px',
+                color: 'white', fontWeight: 700, fontSize: '1rem',
+                cursor: 'pointer', letterSpacing: '0.02em',
+                boxShadow: '0 4px 20px rgba(245,158,11,0.35)',
+                transition: 'opacity 0.2s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+            >
+              📷 Cho phép quét khuôn mặt
+            </button>
           </>
         )}
 
+        {/* ── Đang quét ── */}
         {phase === 'scanning' && (
           <>
             <div style={{ position: 'relative', marginBottom: '20px' }}>
               <video
                 ref={videoRef}
-                autoPlay
-                muted
-                playsInline
+                autoPlay muted playsInline
                 style={{
                   width: '100%', maxWidth: '320px',
                   borderRadius: '16px',
-                  border: '2px solid var(--accent-primary)',
-                  boxShadow: '0 0 30px rgba(59, 130, 246, 0.3)',
+                  border: '2px solid var(--accent-primary, #3b82f6)',
+                  boxShadow: '0 0 30px rgba(59,130,246,0.3)',
+                  display: 'block', margin: '0 auto',
                 }}
               />
+              {/* Scan line animation */}
               <div style={{
-                position: 'absolute', inset: 0,
-                borderRadius: '16px',
-                background: 'linear-gradient(transparent 40%, rgba(59, 130, 246, 0.1))',
-                pointerEvents: 'none',
-              }} />
-              {/* Scanning animation line */}
-              <div style={{
-                position: 'absolute', left: '10%', right: '10%',
-                height: '2px', background: 'var(--accent-primary)',
-                boxShadow: '0 0 10px var(--accent-primary)',
-                animation: 'scanLine 2s ease-in-out infinite',
+                position: 'absolute', left: '10%', right: '10%', height: '2px',
+                background: 'var(--accent-primary, #3b82f6)',
+                boxShadow: '0 0 10px var(--accent-primary, #3b82f6)',
+                animation: 'fvScanLine 2s ease-in-out infinite',
                 top: '20%',
               }} />
             </div>
-            <h2 style={{ color: 'var(--accent-primary)', margin: '0 0 8px', fontSize: '1.3rem' }}>
+            <h2 style={{ color: 'var(--accent-primary, #3b82f6)', margin: '0 0 8px', fontSize: '1.3rem' }}>
               Đang quét khuôn mặt...
             </h2>
-            <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
-              Vui lòng giữ khuôn mặt ở giữa khung hình
+            <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: '0.9rem' }}>
+              Vui lòng nhìn thẳng vào camera
             </p>
           </>
         )}
 
+        {/* ── Thành công ── */}
         {phase === 'success' && (
           <>
             <div style={{
               width: '80px', height: '80px', margin: '0 auto 20px',
               borderRadius: '50%',
-              background: 'rgba(16, 185, 129, 0.15)',
-              border: '2px solid var(--success)',
+              background: 'rgba(16,185,129,0.12)',
+              border: '2px solid #10b981',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <span style={{ fontSize: '2.5rem' }}>✅</span>
+              <span style={{ fontSize: '2.2rem' }}>✅</span>
             </div>
-            <h2 style={{ color: 'var(--success)', margin: '0 0 12px', fontSize: '1.5rem' }}>
+            <h2 style={{ color: '#10b981', margin: '0 0 12px', fontSize: '1.4rem' }}>
               Xác minh thành công!
             </h2>
-            <p style={{ color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-              Danh tính đã được xác nhận. Timer sẽ tiếp tục...
+            <p style={{ color: 'rgba(255,255,255,0.55)', margin: 0, lineHeight: 1.6 }}>
+              Danh tính đã được xác nhận. Tiếp tục làm việc...
             </p>
             {lastResult && (
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '8px' }}>
+              <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.8rem', marginTop: '10px' }}>
                 Độ tương đồng: {Math.max(0, Math.round((1 - lastResult.distance) * 100))}%
               </p>
             )}
           </>
         )}
 
+        {/* ── Thất bại ── */}
         {phase === 'fail' && (
           <>
             <div style={{
               width: '80px', height: '80px', margin: '0 auto 20px',
               borderRadius: '50%',
-              background: 'rgba(239, 68, 68, 0.15)',
-              border: '2px solid var(--danger)',
+              background: 'rgba(239,68,68,0.12)',
+              border: '2px solid #ef4444',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <span style={{ fontSize: '2.5rem' }}>❌</span>
+              <span style={{ fontSize: '2.2rem' }}>❌</span>
             </div>
-            <h2 style={{ color: 'var(--danger)', margin: '0 0 12px', fontSize: '1.5rem' }}>
+            <h2 style={{ color: '#ef4444', margin: '0 0 12px', fontSize: '1.4rem' }}>
               Xác minh thất bại!
             </h2>
-            <p style={{ color: 'var(--text-muted)', margin: '0 0 16px', lineHeight: 1.6 }}>
-              Không thể xác nhận danh tính. Timer vẫn tạm dừng.
-              <br />Hệ thống sẽ quét lại sau <strong style={{ color: 'var(--danger)' }}>1 phút</strong>.
+            <p style={{ color: 'rgba(255,255,255,0.55)', margin: '0 0 12px', lineHeight: 1.6 }}>
+              Không thể xác nhận danh tính. Vi phạm đã được ghi nhận.
+            </p>
+            <p style={{ color: '#ef4444', fontSize: '0.9rem', fontWeight: 600 }}>
+              ⏸ Thời gian làm việc tạm dừng — hệ thống sẽ thử lại sau 1 phút
             </p>
             {lastResult && lastResult.distance < 999 && (
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+              <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.8rem', marginTop: '10px' }}>
                 Độ tương đồng: {Math.max(0, Math.round((1 - lastResult.distance) * 100))}%
               </p>
             )}
@@ -438,13 +423,17 @@ function FaceVerificationModalInner({ phase, warningCountdown, lastResult, onVer
       </div>
 
       <style>{`
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.05); opacity: 0.8; }
+        @keyframes fvFadeIn {
+          from { opacity: 0; transform: scale(0.97); }
+          to   { opacity: 1; transform: scale(1); }
         }
-        @keyframes scanLine {
-          0% { top: 10%; }
-          50% { top: 80%; }
+        @keyframes fvPulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50%       { transform: scale(1.06); opacity: 0.75; }
+        }
+        @keyframes fvScanLine {
+          0%   { top: 10%; }
+          50%  { top: 80%; }
           100% { top: 10%; }
         }
       `}</style>

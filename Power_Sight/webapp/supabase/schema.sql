@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS employees (
   client INTEGER, -- 'Client'
   log_pass TEXT, -- 'LogPass'
   manager_id TEXT, -- 'MGID'
+  face_descriptor JSONB, -- Face recognition descriptor (128-dim array) for identity verification
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

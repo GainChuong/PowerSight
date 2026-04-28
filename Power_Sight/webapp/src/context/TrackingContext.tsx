@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
 import { handleTrackerPause, handleTrackerResume } from '@/lib/tracking/violationEngine';
+import { useAuth } from '@/context/AuthContext';
 
 interface Session {
   start: string;
@@ -10,10 +11,17 @@ interface Session {
   tasks: number;
 }
 
+interface TrackerStats {
+  completedTasks: number;
+  targetTasks: number;
+  kpiPerformance: number;
+}
+
 interface TrackingContextType {
   isRunning: boolean;
   seconds: number;
   pastSessions: Session[];
+  trackerStats: TrackerStats;
   startTracking: () => void;
   pauseTracking: () => void;
   stopTracking: () => void;
@@ -24,24 +32,35 @@ interface TrackingContextType {
 const TrackingContext = createContext<TrackingContextType | undefined>(undefined);
 
 export function TrackingProvider({ children }: { children: ReactNode }) {
+  const { employeeId } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [pastSessions, setPastSessions] = useState<Session[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('powerSightSessions');
-      if (saved) return JSON.parse(saved);
-    }
-    return [
-      { start: '08:00', end: '11:30', duration: '3h 30m', tasks: 12 },
-      { start: '13:00', end: '13:30', duration: '0h 30m', tasks: 2 }
-    ];
+  const [pastSessions, setPastSessions] = useState<Session[]>([]);
+  const [trackerStats, setTrackerStats] = useState<TrackerStats>({
+    completedTasks: 0,
+    targetTasks: 20,
+    kpiPerformance: 0
   });
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('powerSightSessions', JSON.stringify(pastSessions));
+    if (employeeId) {
+      fetch(`/api/tracker?employeeId=${employeeId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.sessions) {
+            setPastSessions(data.sessions);
+          }
+          if (data.targetTasks !== undefined) {
+            setTrackerStats({
+              completedTasks: data.completedTasks,
+              targetTasks: data.targetTasks,
+              kpiPerformance: data.kpiPerformance
+            });
+          }
+        })
+        .catch(err => console.error('Error fetching tracker data:', err));
     }
-  }, [pastSessions]);
+  }, [employeeId]);
 
   const wasRunningRef = useRef(false);
   const extensionDetectedRef = useRef(false);
@@ -158,7 +177,7 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <TrackingContext.Provider value={{ isRunning, seconds, pastSessions, startTracking, pauseTracking, stopTracking, pauseForVerification, resumeAfterVerification }}>
+    <TrackingContext.Provider value={{ isRunning, seconds, pastSessions, trackerStats, startTracking, pauseTracking, stopTracking, pauseForVerification, resumeAfterVerification }}>
       {children}
     </TrackingContext.Provider>
   );

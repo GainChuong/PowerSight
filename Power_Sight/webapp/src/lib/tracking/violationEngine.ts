@@ -30,7 +30,7 @@ export function shouldProcessFrame(): boolean {
   return true;
 }
 
-export async function logViolation(type: string, severity: 'warning' | 'critical', details: any = {}) {
+export async function logViolation(type: string, severity: 'warning' | 'critical', details: Record<string, unknown> = {}) {
   console.warn(`[VIOLATION ENFORCED] Type: ${type}, Severity: ${severity}`, details);
   try {
     const { error } = await supabase.from('work_logs').insert([{
@@ -90,7 +90,7 @@ export function handleTrackerResume() {
  * @param faces Detected face array from MediaPipe
  * @param isLoggedInEmployee Match probability with stored employee face encoding
  */
-export function checkFacePolicy(faces: any[], isLoggedInEmployee: boolean) {
+export function checkFacePolicy(faces: unknown[], isLoggedInEmployee: boolean) {
   if (!shouldProcessFrame()) return;
 
   if (faces.length === 0) {
