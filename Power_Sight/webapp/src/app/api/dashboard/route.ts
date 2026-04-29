@@ -1,179 +1,124 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import * as xlsx from 'xlsx';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get('employeeId');
-    const monthYear = searchParams.get('month'); // e.g., '04/2026'
+    const yearStr = searchParams.get('year') || '2026'; // e.g., '2026'
 
-    if (!employeeId || !monthYear) {
-      return NextResponse.json({ error: 'Missing employeeId or month' }, { status: 400 });
+    if (!employeeId) {
+      return NextResponse.json({ error: 'Missing employeeId' }, { status: 400 });
     }
 
-    // Convert '04/2026' to '2026_04' format used in directories
-    const [monthStr, yearStr] = monthYear.split('/');
-    const folderName = `${yearStr}_${monthStr}`;
+    const year = parseInt(yearStr);
 
-    const dataPath = path.join(process.cwd(), 'generated_data', employeeId, folderName);
+    // Fetch data from Supabase
+    const [sapRes, kpiRes, fraudRes, sessionRes] = await Promise.all([
+      supabase.from('sap_reality').select('*').eq('emp_id', employeeId).eq('year', year),
+      supabase.from('kpi_data').select('*').eq('emp_id', employeeId).eq('year', year),
+      supabase.from('fraud_events').select('*').eq('emp_id', employeeId).eq('year', year),
+      supabase.from('browser_sessions').select('month,total_seconds').eq('emp_id', employeeId).eq('year', year)
+    ]);
 
-    if (!fs.existsSync(dataPath)) {
-      return NextResponse.json({ error: 'Data not found for this period' }, { status: 404 });
-    }
+    if (sapRes.error) throw sapRes.error;
+    if (kpiRes.error) throw kpiRes.error;
+    if (fraudRes.error) throw fraudRes.error;
+    if (sessionRes.error) throw sessionRes.error;
 
-    const sapDataPath = path.join(dataPath, 'sap_data.xlsx');
-    const workLogPath = path.join(dataPath, `work_logs_${employeeId}_${folderName}.xlsx`);
+    const sapData = sapRes.data || [];
+    const kpiData = kpiRes.data || [];
+    const fraudData = fraudRes.data || [];
+    const sessionData = sessionRes.data || [];
 
-    // Initialize daily data structure for 31 days max
-    const daysInMonth = new Date(parseInt(yearStr), parseInt(monthStr), 0).getDate();
-    const dailyData = Array.from({ length: daysInMonth }, (_, i) => ({
-      day: `Ngày ${i + 1}`,
-      dayNum: i + 1,
-      violations: 0,
-      revenue: 0,
-      profit: 0,
-      ordersCompleted: 0,
-      hoursWorked: 0,
-    }));
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
+    const monthlyData = [];
+    let totalOrdersAll = 0;
+    let completedOrdersAll = 0;
+    let totalProfitAll = 0;
+    let totalTargetAll = 0;
+    let totalHoursAll = 0;
+    let totalFraudAll = 0;
+    let criticalAll = 0;
+    let warningAll = 0;
 
-    let totalOrders = 0;
-    let completedOrders = 0;
-    let totalProfit = 0;
-    let kpiTarget = 0;
-    let totalHours = 0;
-    let totalFraud = 0;
-
-    // --- Process SAP Data ---
-    if (fs.existsSync(sapDataPath)) {
-      const buf = fs.readFileSync(sapDataPath);
-      const sapWorkbook = xlsx.read(buf, { type: 'buffer' });
+    for (let m = 1; m <= 12; m++) {
+      const dSap = sapData.filter((d: any) => d.month === m);
       
-      // Reality Sheet
-      if (sapWorkbook.SheetNames.includes('Reality')) {
-        const realitySheet = sapWorkbook.Sheets['Reality'];
-        const realityData = xlsx.utils.sheet_to_json(realitySheet) as any[];
-
-        // Group by Sales Doc.
-        const orders = new Map<string, any[]>();
-        realityData.forEach(row => {
-          const doc = row['Sales Doc.'];
-          if (doc) {
-            if (!orders.has(doc)) orders.set(doc, []);
-            orders.get(doc)!.push(row);
-          }
-        });
-
-        totalOrders = orders.size;
-
-        orders.forEach((rows, doc) => {
-          // Check if order is completed (has OS='C' and DS='C')
-          const isCompleted = rows.some(r => r['OS'] === 'C' && r['DS'] === 'C');
-          
-          if (isCompleted) {
-            completedOrders++;
-            
-            // Profit is the Net Value of the completed row
-            const completedRow = rows.find(r => r['OS'] === 'C' && r['DS'] === 'C');
-            const profit = parseFloat(completedRow['Net Value']) || 0;
-            totalProfit += profit;
-
-            // Attribute to day
-            const createdOn = new Date(completedRow['Created On']);
-            if (!isNaN(createdOn.getTime())) {
-              const day = createdOn.getDate();
-              if (day >= 1 && day <= daysInMonth) {
-                dailyData[day - 1].ordersCompleted++;
-                dailyData[day - 1].profit += profit;
-                // Roughly estimate revenue based on profit if missing, but it's typically close to net value
-                dailyData[day - 1].revenue += profit * 1.5; 
-              }
-            }
-          }
-        });
-      }
-
-      // KPI Sheet
-      if (sapWorkbook.SheetNames.includes('KPI')) {
-        const kpiSheet = sapWorkbook.Sheets['KPI'];
-        const kpiData = xlsx.utils.sheet_to_json(kpiSheet) as any[];
-        if (kpiData.length > 0 && kpiData[0]['KPI_NUM']) {
-          kpiTarget = parseFloat(kpiData[0]['KPI_NUM']);
-        }
-      }
-    }
-
-    // --- Process Work Logs ---
-    if (fs.existsSync(workLogPath)) {
-      const workBuf = fs.readFileSync(workLogPath);
-      const workWorkbook = xlsx.read(workBuf, { type: 'buffer' });
+      // Calculate Revenue (OS=A)
+      const rev = dSap.filter((d: any) => d.os === 'A').reduce((sum: number, d: any) => sum + Number(d.net_value || 0), 0);
       
-      // Fraud Events
-      if (workWorkbook.SheetNames.includes('Fraud_Events')) {
-        const fraudSheet = workWorkbook.Sheets['Fraud_Events'];
-        const fraudData = xlsx.utils.sheet_to_json(fraudSheet) as any[];
-        
-        fraudData.forEach(row => {
-          totalFraud++;
-          const dateStr = row['Date'];
-          if (dateStr) {
-            const date = new Date(dateStr);
-            if (!isNaN(date.getTime())) {
-              const day = date.getDate();
-              if (day >= 1 && day <= daysInMonth) {
-                dailyData[day - 1].violations++;
-              }
-            }
-          }
-        });
-      }
+      // Calculate Completed and Profit
+      const completedRows = dSap.filter((d: any) => d.os === 'C' && d.ds === 'C');
+      const prof = completedRows.reduce((sum: number, d: any) => sum + Number(d.net_value || 0), 0);
+      
+      // Unique orders
+      const uniqueOrders = new Set(dSap.map((d: any) => d.sales_doc));
+      const totalOrd = uniqueOrders.size;
+      const compOrd = new Set(completedRows.map((d: any) => d.sales_doc)).size;
 
-      // Browser Sessions
-      if (workWorkbook.SheetNames.includes('Browser_Sessions')) {
-        const browserSheet = workWorkbook.Sheets['Browser_Sessions'];
-        const browserData = xlsx.utils.sheet_to_json(browserSheet) as any[];
-        
-        browserData.forEach(row => {
-          const hours = (parseFloat(row['Total_Seconds']) || 0) / 3600;
-          totalHours += hours;
-          
-          const dateStr = row['Date'] || row['Session_Start'];
-          if (dateStr) {
-            const date = new Date(dateStr);
-            if (!isNaN(date.getTime())) {
-              const day = date.getDate();
-              if (day >= 1 && day <= daysInMonth) {
-                dailyData[day - 1].hoursWorked += hours;
-              }
-            }
-          }
-        });
-      }
+      // KPI Target
+      const mKpi = kpiData.filter((d: any) => d.month === m);
+      const target = mKpi.reduce((sum: number, d: any) => sum + Number(d.kpi_value || 0), 0);
+
+      // Fraud
+      const mFraud = fraudData.filter((d: any) => d.month === m);
+      const frC = mFraud.filter((d: any) => d.severity === 'CRITICAL').length;
+      const frW = mFraud.filter((d: any) => d.severity === 'WARNING').length;
+      const frTotal = frC + frW;
+
+      // Hours
+      const mSess = sessionData.filter((d: any) => d.month === m);
+      const hrs = mSess.reduce((sum: number, d: any) => sum + Number(d.total_seconds || 0), 0) / 3600;
+
+      monthlyData.push({
+        monthName: monthNames[m - 1],
+        revenue: rev,
+        profit: prof,
+        totalOrders: totalOrd,
+        completedOrders: compOrd,
+        target: target,
+        hoursWorked: Number(hrs.toFixed(1)),
+        fraudCritical: frC,
+        fraudWarning: frW,
+        fraudTotal: frTotal
+      });
+
+      totalOrdersAll += totalOrd;
+      completedOrdersAll += compOrd;
+      totalProfitAll += prof;
+      totalTargetAll += target;
+      totalHoursAll += hrs;
+      totalFraudAll += frTotal;
+      criticalAll += frC;
+      warningAll += frW;
     }
 
-    // Round daily hours to 1 decimal
-    dailyData.forEach(d => {
-      d.hoursWorked = parseFloat(d.hoursWorked.toFixed(1));
-    });
-
-    const completionRate = kpiTarget > 0 ? (completedOrders / kpiTarget) * 100 : 0;
+    const completionRate = totalTargetAll > 0 ? (completedOrdersAll / totalTargetAll) * 100 : 0;
 
     return NextResponse.json({
-      dailyData,
+      monthlyData,
       metrics: {
-        totalOrders,
-        completedOrders,
-        totalHours: parseFloat(totalHours.toFixed(1)),
-        totalFraud,
-        totalProfit,
-        kpiTarget,
+        totalOrders: totalOrdersAll,
+        completedOrders: completedOrdersAll,
+        totalHours: Number(totalHoursAll.toFixed(1)),
+        totalFraud: totalFraudAll,
+        criticalFraud: criticalAll,
+        warningFraud: warningAll,
+        totalProfit: totalProfitAll,
+        kpiTarget: totalTargetAll,
         completionRate: completionRate.toFixed(1)
       }
     });
 
   } catch (error) {
     console.error('Dashboard API Error:', error);
-    return NextResponse.json({ error: 'Lỗi server khi đọc dữ liệu' }, { status: 500 });
+    return NextResponse.json({ error: 'Lỗi server khi đọc dữ liệu từ Supabase' }, { status: 500 });
   }
 }

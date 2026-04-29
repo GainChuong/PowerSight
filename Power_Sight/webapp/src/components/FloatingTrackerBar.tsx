@@ -3,9 +3,16 @@
 import { useTracking } from '@/context/TrackingContext';
 import { Play, Pause, Square, Clock, ScanFace } from 'lucide-react';
 import { checkFacePolicy } from '@/lib/tracking/violationEngine';
+import { usePathname } from 'next/navigation';
 
 export default function FloatingTrackerBar() {
   const { isRunning, seconds, startTracking, pauseTracking, stopTracking } = useTracking();
+  const pathname = usePathname();
+
+  // Hide on tracker page since it has its own controls
+  if (pathname === '/tracker') {
+    return null;
+  }
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
@@ -31,13 +38,6 @@ export default function FloatingTrackerBar() {
       gap: '30px',
       boxShadow: '0 4px 30px rgba(0, 0, 0, 0.5)'
     }}>
-      {/* ML Status Indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: isRunning ? 'var(--success)' : 'var(--text-muted)' }}>
-        <ScanFace size={18} />
-        <span style={{ fontSize: '0.8rem', fontWeight: 'bold', textTransform: 'uppercase' }}>
-          {isRunning ? 'Đang hoạt động' : 'AI Offline'}
-        </span>
-      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--accent-primary)', fontWeight: 'bold', fontSize: '1.2rem', fontFamily: 'monospace' }}>
         <Clock size={20} />

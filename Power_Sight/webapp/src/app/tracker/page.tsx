@@ -40,27 +40,16 @@ export default function TimeTracker() {
   const timeProgress = (totalSeconds / GOAL_SECONDS) * 100;
   
   const getAiFeedback = () => {
-    if (KPI_PERFORMANCE >= 90) {
+    if (trackerStats.violationsCount > 0) {
       return {
-        text: "🔥 Tuyệt vời! Bạn đang làm việc cực kì hiệu quả và sắp hoàn thành mục tiêu ngày hôm nay. Tiếp tục giữ vững phong độ này nhé!",
-        color: "var(--success)", glow: "rgba(16, 185, 129, 0.2)"
-      };
-    } else if (KPI_PERFORMANCE >= 50) {
-      return {
-        text: "📈 Bạn đang làm tốt! Tiến độ công việc ổn định. Cố gắng hoàn thiện nốt các đơn hàng ưu tiên cao trong buổi chiều nhé.",
-        color: "var(--accent-primary)", glow: "var(--accent-glow)"
-      };
-    } else if (COMPLETED_TASKS < 5) {
-      return {
-        text: "⚠️ Cảnh báo: Tốc độ hoàn thành KPI đang chậm hơn so với dự kiến. Bạn cần tập trung xử lý dứt điểm các tác vụ tồn đọng.",
+        text: trackerStats.aiFeedback,
         color: "var(--danger)", glow: "rgba(239, 68, 68, 0.2)"
       };
-    } else {
-      return {
-        text: "⚡ Cố lên nào! Bạn còn thiếu một chút nữa để đạt mốc an toàn. Đừng để các yếu tố bên ngoài làm xao nhãng.",
-        color: "var(--warning)", glow: "rgba(245, 158, 11, 0.2)"
-      };
     }
+    return {
+      text: trackerStats.aiFeedback,
+      color: "var(--accent-primary)", glow: "var(--accent-glow)"
+    };
   };
 
   const aiFeedback = getAiFeedback();
@@ -119,19 +108,6 @@ export default function TimeTracker() {
               </div>
            </div>
 
-           <div className="glass-card" style={{ padding: '20px', border: '1px solid var(--danger)', background: 'rgba(239, 68, 68, 0.05)' }}>
-             <h3 style={{ color: 'var(--danger)', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertTriangle size={20} /> Giả lập AI Tracking (Test)
-             </h3>
-             <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => checkFacePolicy([], false)} className="btn-danger" style={{ flex: 1, padding: '10px' }}>
-                   Mất khuôn mặt
-                </button>
-                <button onClick={() => checkFacePolicy([{id: 1}], false)} className="btn-danger" style={{ flex: 1, padding: '10px' }}>
-                   Sai người
-                </button>
-             </div>
-           </div>
 
         </div>
 
@@ -162,12 +138,29 @@ export default function TimeTracker() {
           </div>
 
           <div style={{ display: 'flex', gap: '24px' }}>
-              <div className="glass-card" style={{ padding: '20px', flex: 1, textAlign: 'center' }}>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '10px', fontSize: '0.9rem' }}>Nhiệm vụ</div>
+              <div className="glass-card" style={{ padding: '20px', flex: 1, textAlign: 'center', border: trackerStats.violationsCount > 0 ? '1px solid rgba(239, 68, 68, 0.3)' : 'none' }}>
+                <div style={{ color: 'var(--text-muted)', marginBottom: '10px', fontSize: '0.9rem' }}>Vi phạm</div>
                 <div style={{ width: '80px', height: '80px', margin: '0 auto' }}>
                    <ResponsiveContainer width="100%" height="100%">
                      <PieChart>
-                       <Pie data={[{ value: COMPLETED_TASKS }, { value: TARGET_TASKS - COMPLETED_TASKS }]} cx="50%" cy="50%" innerRadius={25} outerRadius={40} dataKey="value" stroke="none">
+                       <Pie data={[{ value: trackerStats.violationsCount }, { value: Math.max(1, 10 - trackerStats.violationsCount) }]} cx="50%" cy="50%" innerRadius={25} outerRadius={40} dataKey="value" stroke="none">
+                         <Cell fill={trackerStats.violationsCount > 0 ? "var(--danger)" : "var(--success)"} />
+                         <Cell fill="rgba(255,255,255,0.1)" />
+                       </Pie>
+                     </PieChart>
+                   </ResponsiveContainer>
+                </div>
+                <div style={{ marginTop: '10px', fontWeight: 'bold', color: trackerStats.violationsCount > 0 ? 'var(--danger)' : 'var(--text-main)' }}>
+                  {trackerStats.violationsCount} lỗi
+                </div>
+              </div>
+
+              <div className="glass-card" style={{ padding: '20px', flex: 1, textAlign: 'center' }}>
+                <div style={{ color: 'var(--text-muted)', marginBottom: '10px', fontSize: '0.9rem' }}>KPI Hoàn thành</div>
+                <div style={{ width: '80px', height: '80px', margin: '0 auto' }}>
+                   <ResponsiveContainer width="100%" height="100%">
+                     <PieChart>
+                       <Pie data={[{ value: COMPLETED_TASKS }, { value: Math.max(0, TARGET_TASKS - COMPLETED_TASKS) }]} cx="50%" cy="50%" innerRadius={25} outerRadius={40} dataKey="value" stroke="none">
                          <Cell fill="var(--success)" />
                          <Cell fill="rgba(255,255,255,0.1)" />
                        </Pie>
@@ -175,21 +168,6 @@ export default function TimeTracker() {
                    </ResponsiveContainer>
                 </div>
                 <div style={{ marginTop: '10px', fontWeight: 'bold' }}>{COMPLETED_TASKS}/{TARGET_TASKS}</div>
-              </div>
-
-              <div className="glass-card" style={{ padding: '20px', flex: 1, textAlign: 'center' }}>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '10px', fontSize: '0.9rem' }}>Thành tích</div>
-                <div style={{ width: '80px', height: '80px', margin: '0 auto' }}>
-                   <ResponsiveContainer width="100%" height="100%">
-                     <PieChart>
-                       <Pie data={[{ value: KPI_PERFORMANCE }, { value: 100 - KPI_PERFORMANCE }]} cx="50%" cy="50%" innerRadius={25} outerRadius={40} dataKey="value" stroke="none">
-                         <Cell fill="var(--warning)" />
-                         <Cell fill="rgba(255,255,255,0.1)" />
-                       </Pie>
-                     </PieChart>
-                   </ResponsiveContainer>
-                </div>
-                <div style={{ marginTop: '10px', fontWeight: 'bold' }}>{KPI_PERFORMANCE}%</div>
               </div>
           </div>
 

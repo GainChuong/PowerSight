@@ -1,25 +1,53 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export async function POST(req: Request) {
   try {
-    const { employeeId } = await req.json();
+    const { employeeId, password } = await req.json();
 
     if (!employeeId) {
       return NextResponse.json({ error: 'Mã nhân viên là bắt buộc' }, { status: 400 });
     }
 
-    // Kiểm tra thư mục nhân viên trong generated_data
-    const generatedDataPath = path.join(process.cwd(), 'generated_data', employeeId);
+    // Truy vấn Supabase để lấy thông tin nhân viên
+    console.log('[Auth API] Đang kiểm tra mã nhân viên:', employeeId);
     
-    if (fs.existsSync(generatedDataPath)) {
-      return NextResponse.json({ success: true, employeeId });
-    } else {
-      return NextResponse.json({ error: 'Không tìm thấy nhân viên trong dữ liệu hệ thống' }, { status: 404 });
+    const { data: employee, error } = await supabase
+      .from('employees')
+      .select('emp_id, password_hash, full_name')
+      .eq('emp_id', employeeId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[Auth API] Supabase Error:', error);
+      return NextResponse.json({ error: 'Lỗi truy vấn cơ sở dữ liệu: ' + error.message }, { status: 500 });
     }
+
+    console.log('[Auth API] Kết quả truy vấn:', employee);
+
+    if (!employee) {
+      return NextResponse.json({ error: 'Không tìm thấy mã nhân viên trong hệ thống (DB returned null)' }, { status: 404 });
+    }
+
+    // Kiểm tra mật khẩu (Trong môi trường dev hiện tại, so sánh trực tiếp hoặc so sánh với 'test_hash')
+    // Lưu ý: Trong thực tế nên dùng bcrypt để so sánh hash
+    if (password && employee.password_hash !== password && employee.password_hash !== 'test_hash') {
+      return NextResponse.json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      employeeId: employee.emp_id,
+      fullName: employee.full_name 
+    });
+    
   } catch (error) {
     console.error('Auth API Error:', error);
-    return NextResponse.json({ error: 'Lỗi server' }, { status: 500 });
+    return NextResponse.json({ error: 'Lỗi server hệ thống' }, { status: 500 });
   }
 }

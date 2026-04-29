@@ -44,6 +44,20 @@
           <button id="ps-btn-stop" class="ps-btn ps-btn-stop" title="Kết thúc">⏹</button>
         </div>
 
+        <div class="ps-dropdown-container">
+          <button id="ps-btn-apps" class="ps-btn ps-btn-apps" title="Ứng dụng nhanh">
+            🚀 Ứng dụng <span class="ps-chevron">▼</span>
+          </button>
+          <div id="ps-apps-menu" class="ps-dropdown-menu">
+            <button id="ps-btn-gmail" class="ps-dropdown-item">
+              <span class="ps-item-icon">📧</span> Gmail
+            </button>
+            <button id="ps-btn-sap" class="ps-dropdown-item">
+              <span class="ps-item-icon">📊</span> SAP System
+            </button>
+          </div>
+        </div>
+
         <button id="ps-btn-home" class="ps-btn ps-btn-home" title="Quay về Dashboard">
           🏠 Dashboard
         </button>
@@ -237,6 +251,30 @@
     btnPause.addEventListener('click', () => sendMessage('PAUSE'));
     btnStop.addEventListener('click', () => sendMessage('STOP'));
     btnHome.addEventListener('click', () => sendMessage('GO_HOME'));
+    
+    const appsBtn = document.getElementById('ps-btn-apps');
+    const appsMenu = document.getElementById('ps-apps-menu');
+    
+    if (appsBtn && appsMenu) {
+      appsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        appsMenu.classList.toggle('ps-show');
+      });
+      
+      document.addEventListener('click', () => {
+        appsMenu.classList.remove('ps-show');
+      });
+    }
+    
+    document.getElementById('ps-btn-gmail').addEventListener('click', () => {
+      appsMenu.classList.remove('ps-show');
+      sendMessage('SWITCH_TAB', { url: 'https://mail.google.com', pattern: '*://mail.google.com/*' });
+    });
+    
+    document.getElementById('ps-btn-sap').addEventListener('click', () => {
+      appsMenu.classList.remove('ps-show');
+      sendMessage('SWITCH_TAB', { url: 'https://ucc.cit.tum.de', pattern: '*://ucc.cit.tum.de/*' });
+    });
 
     btnToggle.addEventListener('click', () => {
       isMinimized = !isMinimized;

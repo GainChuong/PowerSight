@@ -14,7 +14,9 @@ interface Session {
 interface TrackerStats {
   completedTasks: number;
   targetTasks: number;
+  violationsCount: number;
   kpiPerformance: number;
+  aiFeedback: string;
 }
 
 interface TrackingContextType {
@@ -39,28 +41,36 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
   const [trackerStats, setTrackerStats] = useState<TrackerStats>({
     completedTasks: 0,
     targetTasks: 20,
-    kpiPerformance: 0
+    violationsCount: 0,
+    kpiPerformance: 0,
+    aiFeedback: "Đang phân tích dữ liệu hiệu suất..."
   });
 
-  useEffect(() => {
-    if (employeeId) {
-      fetch(`/api/tracker?employeeId=${employeeId}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.sessions) {
-            setPastSessions(data.sessions);
-          }
-          if (data.targetTasks !== undefined) {
-            setTrackerStats({
-              completedTasks: data.completedTasks,
-              targetTasks: data.targetTasks,
-              kpiPerformance: data.kpiPerformance
-            });
-          }
-        })
-        .catch(err => console.error('Error fetching tracker data:', err));
+  const fetchTrackerData = useCallback(async () => {
+    if (!employeeId) return;
+    try {
+      const res = await fetch(`/api/tracker?employeeId=${employeeId}`);
+      const data = await res.json();
+      if (data.sessions) {
+        setPastSessions(data.sessions);
+      }
+      if (data.targetTasks !== undefined) {
+        setTrackerStats({
+          completedTasks: data.completedTasks,
+          targetTasks: data.targetTasks,
+          violationsCount: data.violationsCount || 0,
+          kpiPerformance: data.kpiPerformance,
+          aiFeedback: data.aiFeedback || "AI chưa có nhận xét nào."
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching tracker data:', err);
     }
   }, [employeeId]);
+
+  useEffect(() => {
+    fetchTrackerData();
+  }, [fetchTrackerData]);
 
   const wasRunningRef = useRef(false);
   const extensionDetectedRef = useRef(false);
@@ -119,11 +129,14 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  const [startTime, setStartTime] = useState<string | null>(null);
+
   const startTracking = useCallback(() => {
     // Send command to extension if present
     window.postMessage({ type: 'POWERSIGHT_COMMAND', command: 'START' }, '*');
     // Also update local state immediately (fallback or instant UI feedback)
     setIsRunning(true);
+    setStartTime(new Date().toISOString());
     if (!wasRunningRef.current) {
       handleTrackerResume();
     }
@@ -146,21 +159,42 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const stopTracking = useCallback(() => {
+  const stopTracking = useCallback(async () => {
     window.postMessage({ type: 'POWERSIGHT_COMMAND', command: 'STOP' }, '*');
+    
+    const currentSeconds = seconds;
+    const currentStartTime = startTime;
     const now = new Date();
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    setPastSessions(prev => [
-      ...prev,
-      { 
-        start: timeStr, end: timeStr, 
-        duration: formatTime(seconds), tasks: 0 
+    
+    // Call API to save session
+    if (employeeId && currentStartTime) {
+      try {
+        const res = await fetch('/api/tracker', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employeeId,
+            seconds: currentSeconds,
+            startTime: currentStartTime,
+            endTime: now.toISOString()
+          })
+        });
+        const result = await res.json();
+        
+        if (result.saved) {
+          // Re-fetch to get updated stats and sessions from Supabase
+          await fetchTrackerData();
+        }
+      } catch (err) {
+        console.error('Error saving session:', err);
       }
-    ]);
+    }
+
     setIsRunning(false);
     setSeconds(0);
+    setStartTime(null);
     wasRunningRef.current = false;
-  }, [seconds]);
+  }, [seconds, startTime, employeeId, fetchTrackerData]);
 
   // Pause/resume specifically for face verification (no violation logging)
   const pauseForVerification = useCallback(() => {

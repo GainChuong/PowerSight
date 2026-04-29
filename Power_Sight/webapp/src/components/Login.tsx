@@ -158,11 +158,14 @@ export default function Login() {
       const res  = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId: EMPLOYEE_ID }),
+        body: JSON.stringify({ 
+          employeeId: EMPLOYEE_ID,
+          password: password 
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setError(data.error || 'Mã nhân viên không hợp lệ');
+        setError(data.error || 'Mã nhân viên hoặc mật khẩu không đúng');
         return;
       }
       try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }

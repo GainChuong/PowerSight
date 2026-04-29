@@ -419,6 +419,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true });
       break;
+    case 'SWITCH_TAB':
+      chrome.tabs.query({ url: msg.pattern }, (tabs) => {
+        if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
+        if (tabs && tabs.length > 0) {
+          const existingTab = tabs[0];
+          chrome.tabs.update(existingTab.id, { active: true });
+          chrome.windows.update(existingTab.windowId, { focused: true });
+        } else {
+          chrome.tabs.create({ url: msg.url });
+        }
+      });
+      sendResponse({ ok: true });
+      break;
     case 'FACE_VERIFY_RESULT':
       // Handle result from content script face verification
       console.log('[PowerSight] Face verify result:', msg.result);
