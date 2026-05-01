@@ -18,23 +18,42 @@ export async function GET(req: Request) {
 
     const year = parseInt(yearStr);
 
-    // Fetch data from Supabase
-    const [sapRes, kpiRes, fraudRes, sessionRes] = await Promise.all([
-      supabase.from('sap_reality').select('*').eq('emp_id', employeeId).eq('year', year),
-      supabase.from('kpi_data').select('*').eq('emp_id', employeeId).eq('year', year),
-      supabase.from('fraud_events').select('*').eq('emp_id', employeeId).eq('year', year),
-      supabase.from('browser_sessions').select('month,total_seconds').eq('emp_id', employeeId).eq('year', year)
+    // Fetch data from Supabase using pagination to bypass 1000-row limit
+    const fetchAllRows = async (table: string, columns: string) => {
+      let allData: any[] = [];
+      let from = 0;
+      const limit = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from(table)
+          .select(columns)
+          .eq('emp_id', employeeId)
+          .eq('year', year)
+          .range(from, from + limit - 1);
+        
+        if (error) throw error;
+        if (data) {
+          allData = allData.concat(data);
+          if (data.length < limit) {
+            hasMore = false;
+          } else {
+            from += limit;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+      return allData;
+    }
+
+    const [sapData, kpiData, fraudData, sessionData] = await Promise.all([
+      fetchAllRows('sap_reality', '*'),
+      fetchAllRows('kpi_data', '*'),
+      fetchAllRows('fraud_events', '*'),
+      fetchAllRows('browser_sessions', 'month,total_seconds')
     ]);
-
-    if (sapRes.error) throw sapRes.error;
-    if (kpiRes.error) throw kpiRes.error;
-    if (fraudRes.error) throw fraudRes.error;
-    if (sessionRes.error) throw sessionRes.error;
-
-    const sapData = sapRes.data || [];
-    const kpiData = kpiRes.data || [];
-    const fraudData = fraudRes.data || [];
-    const sessionData = sessionRes.data || [];
 
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     

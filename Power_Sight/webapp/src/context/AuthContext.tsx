@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
-const AUTH_VERSION = '3'; // Tăng số này để xóa session cũ và force re-login
+const AUTH_VERSION = '4'; // Tăng số này để xóa session cũ và force re-login
 
 interface AuthContextType {
   isAuthenticated: boolean;

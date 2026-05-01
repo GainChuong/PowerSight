@@ -20,7 +20,7 @@ interface ChatMessage {
 }
 
 export default function Chatbot() {
-  const { employeeId, fullName } = useAuth();
+  const { employeeId } = useAuth();
 
   // State: Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -262,7 +262,7 @@ export default function Chatbot() {
             </div>
             <div>
               <h1 style={{ color: 'white', fontSize: '15px', fontWeight: 'bold', margin: 0 }}>PowerSight Assistant</h1>
-              <p style={{ color: '#94a3b8', fontSize: '11px', margin: 0 }}>Hỗ trợ: {fullName || employeeId}</p>
+              <p style={{ color: '#94a3b8', fontSize: '11px', margin: 0 }}>Hỗ trợ: {employeeId}</p>
             </div>
           </div>
           <Link href="/" style={{
@@ -290,7 +290,7 @@ export default function Chatbot() {
                 <Sparkles color="white" size={36} />
               </div>
               <h2 style={{ color: '#e2e8f0', fontSize: '20px', margin: 0, fontWeight: '600' }}>
-                Xin chào, {fullName || employeeId}!
+                Xin chào, {employeeId}!
               </h2>
               <p style={{ color: '#64748b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '400px' }}>
                 Tôi là PowerSight Assistant. Hãy hỏi tôi bất cứ điều gì về hiệu suất, KPI, vi phạm, hoặc soạn email hỗ trợ.

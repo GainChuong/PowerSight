@@ -138,7 +138,7 @@ export default function KPIDashboard() {
                 subtitle={`Completed: ${filteredMetrics?.completedOrders || 0} / Total: ${filteredMetrics?.totalOrders || 0}`} />
               
               <KPICard title="TOTAL HOURS" value={filteredMetrics?.totalHours || "0"} color="#10b981" 
-                subtitle={`${filteredMetrics?.totalHours > 0 ? (filteredMetrics.completedOrders / filteredMetrics.totalHours).toFixed(2) : 0} orders/hour`} />
+                subtitle={`${filteredMetrics && filteredMetrics.totalHours > 0 ? (filteredMetrics.completedOrders / filteredMetrics.totalHours).toFixed(2) : 0} orders/hour`} />
               
               <KPICard title="FRAUD EVENTS" value={filteredMetrics?.totalFraud || "0"} color="#ef4444" 
                 subtitle={`Critical: ${filteredMetrics?.criticalFraud || 0} | Warning: ${filteredMetrics?.warningFraud || 0}`} />
@@ -148,7 +148,7 @@ export default function KPIDashboard() {
                 progress={Number(filteredMetrics?.completionRate || 0)} />
               
               <KPICard title="TOTAL PROFIT" value={(filteredMetrics?.totalProfit || 0).toLocaleString()} color="#f59e0b" 
-                subtitle={`Avg: ${filteredMetrics?.completedOrders > 0 ? Math.round(filteredMetrics.totalProfit / filteredMetrics.completedOrders).toLocaleString() : 0} VND`} />
+                subtitle={`Avg: ${filteredMetrics && filteredMetrics.completedOrders > 0 ? Math.round(filteredMetrics.totalProfit / filteredMetrics.completedOrders).toLocaleString() : 0} VND`} />
             
             </div>
           </div>
@@ -208,7 +208,7 @@ export default function KPIDashboard() {
                     fill="#8884d8"
                     dataKey="value"
                     labelLine={false}
-                    label={({ name, percent }) => percent > 0 ? `${name}` : ''}
+                    label={({ name, percent }) => (percent || 0) > 0 ? `${name}` : ''}
                   >
                     {pieData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
@@ -229,7 +229,7 @@ export default function KPIDashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="monthName" tick={{ fill: '#94a3b8', fontSize: 12 }} />
                     <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                    <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: 'white' }} formatter={(value: number) => new Intl.NumberFormat('vi-VN').format(value) + ' VND'} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: 'white' }} formatter={(value: any) => new Intl.NumberFormat('vi-VN').format(Number(value) || 0) + ' VND'} />
                     <Legend wrapperStyle={{ fontSize: '12px', color: 'white' }} />
                     <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#f59e0b" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                     <Line type="monotone" dataKey="profit" name="Profit" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />

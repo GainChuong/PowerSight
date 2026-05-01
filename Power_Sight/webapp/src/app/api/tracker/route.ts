@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
-import { cookies } from 'next/headers';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const supabase = createSupabaseClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 
 async function getGeminiFeedback(employeeId: string, completedTasks: number, targetTasks: number, violationsCount: number) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     const prompt = `Bạn là trợ lý hiệu suất PowerSight. Hãy đưa ra 1 nhận xét cực ngắn (tối đa 25 từ) về hiệu suất của nhân viên ${employeeId} dựa trên:
 - Đơn hoàn thành: ${completedTasks}/${targetTasks}
 - Số lỗi vi phạm: ${violationsCount} lỗi.
@@ -30,9 +34,6 @@ export async function GET(req: Request) {
     if (!employeeId) {
       return NextResponse.json({ error: 'Missing employeeId' }, { status: 400 });
     }
-
-    const cookieStore = await cookies();
-    const supabase = createClient(cookieStore);
 
     // 1. Fetch recent sessions from Supabase
     const { data: sessionData, error: sessionError } = await supabase
@@ -135,9 +136,6 @@ export async function POST(req: Request) {
     if (seconds < 3600) {
       return NextResponse.json({ message: 'Session too short (< 1hr), not saved.', saved: false });
     }
-
-    const cookieStore = await cookies();
-    const supabase = createClient(cookieStore);
 
     const formatTimeStr = (s: number) => {
       const h = Math.floor(s / 3600);

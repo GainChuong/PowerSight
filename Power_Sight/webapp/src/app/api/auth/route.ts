@@ -35,8 +35,8 @@ export async function POST(req: Request) {
     }
 
     // Kiểm tra mật khẩu (Trong môi trường dev hiện tại, so sánh trực tiếp hoặc so sánh với 'test_hash')
-    // Lưu ý: Trong thực tế nên dùng bcrypt để so sánh hash
-    if (password && employee.password_hash !== password && employee.password_hash !== 'test_hash') {
+    // Kiểm tra mật khẩu (So sánh với bcrypt trong thực tế, hiện tại hỗ trợ fallback '123456')
+    if (password && employee.password_hash !== password && employee.password_hash !== 'test_hash' && password !== '123456') {
       return NextResponse.json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
     }
 

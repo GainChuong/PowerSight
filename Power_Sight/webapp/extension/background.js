@@ -26,8 +26,8 @@ const ALLOWED_PATTERNS = [
 
 // ---- Face Verification Config ----
 const FACE_VERIFY_MIN_MS = 60_000;  // 1 minute
-const FACE_VERIFY_MAX_MS = 180_000; // 3 minutes
-const FACE_VERIFY_RETRY_MS = 60_000; // 1 minute retry on failure
+const FACE_VERIFY_MAX_MS = 60_000; // 1 minute
+const FACE_VERIFY_RETRY_MS = 30_000; // 30 seconds retry on failure
 
 const KEEPALIVE_ALARM = 'powersight-keepalive';
 const STORAGE_KEY = 'powersight_timer_state';
@@ -126,13 +126,23 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ---- Timer via Timestamps ----
 function startTimer() {
-  if (timerState.isRunning) return;
+  if (timerState.isRunning) {
+    // Nếu đang chạy mà bị kẹt state xác minh mặt thì clear state
+    if (faceVerifyState.isPausedForFace) {
+      faceVerifyState.isPausedForFace = false;
+      faceVerifyState.phase = 'idle';
+      broadcastState();
+    }
+    return;
+  }
   timerState.isRunning = true;
   timerState.isPausedByViolation = false;
   timerState.runSince = Date.now();
   if (!timerState.sessionStart) {
     timerState.sessionStart = new Date().toISOString();
   }
+  faceVerifyState.isPausedForFace = false;
+  faceVerifyState.phase = 'idle';
   startKeepalive();
   saveState();
   broadcastState();
@@ -231,14 +241,10 @@ function clearFaceVerifyTimer() {
 }
 
 function scheduleFaceVerification(delayMs) {
+  // Webapp handles face verification. The extension no longer schedules it independently
+  // to prevent camera conflicts and double verification loops.
   clearFaceVerifyTimer();
-  const delay = delayMs || randomFaceInterval();
-  console.log(`[PowerSight] 🕐 Face verification scheduled in ${Math.round(delay / 1000)}s`);
-
-  faceVerifyTimer = setTimeout(() => {
-    if (!timerState.isRunning) return;
-    triggerFaceVerification();
-  }, delay);
+  return;
 }
 
 function triggerFaceVerification() {

@@ -10,17 +10,36 @@ const supabase = createClient(
 
 // Tính 8 chỉ số hiệu suất theo data_processor.py
 async function computeMetrics(employeeId: string, year: number) {
-  const [sapRes, kpiRes, fraudRes, sessionRes] = await Promise.all([
-    supabase.from('sap_reality').select('*').eq('emp_id', employeeId).eq('year', year),
-    supabase.from('kpi_data').select('*').eq('emp_id', employeeId).eq('year', year),
-    supabase.from('fraud_events').select('*').eq('emp_id', employeeId).eq('year', year),
-    supabase.from('browser_sessions').select('*').eq('emp_id', employeeId).eq('year', year)
-  ]);
+  const fetchAllRows = async (table: string, columns: string) => {
+    let allData: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from(table)
+        .select(columns)
+        .eq('emp_id', employeeId)
+        .eq('year', year)
+        .range(from, from + limit - 1);
+      if (error) throw error;
+      if (data) {
+        allData = allData.concat(data);
+        if (data.length < limit) hasMore = false;
+        else from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+    return allData;
+  };
 
-  const sapData = sapRes.data || [];
-  const kpiData = kpiRes.data || [];
-  const fraudData = fraudRes.data || [];
-  const sessionData = sessionRes.data || [];
+  const [sapData, kpiData, fraudData, sessionData] = await Promise.all([
+    fetchAllRows('sap_reality', '*'),
+    fetchAllRows('kpi_data', '*'),
+    fetchAllRows('fraud_events', '*'),
+    fetchAllRows('browser_sessions', '*')
+  ]);
 
   // 1. Thời gian làm việc TB
   const totalSeconds = sessionData.reduce((sum, s) => sum + (s.total_seconds || 0), 0);

@@ -17,10 +17,10 @@ interface FaceVerificationContextType {
 }
 
 // ─── Timing Config ────────────────────────────────────────────────────────────
-const FIRST_CHECK_MS  = 5 * 1000;           // 5 giây sau khi đăng nhập (dùng để test)
-const RANDOM_MIN_MS   = 3 * 60 * 1000;      // Tối thiểu 3 phút
-const RANDOM_MAX_MS   = 8 * 60 * 1000;      // Tối đa 8 phút
-const RETRY_MS        = 60 * 1000;          // Thử lại sau 1 phút nếu thất bại
+const FIRST_CHECK_MS  = 60 * 1000;          // 1 phút sau khi bắt đầu
+const RANDOM_MIN_MS   = 60 * 1000;          // 1 phút
+const RANDOM_MAX_MS   = 60 * 1000;          // 1 phút
+const RETRY_MS        = 30 * 1000;          // Thử lại sau 30 giây nếu thất bại
 
 function randomInterval(): number {
   return Math.floor(Math.random() * (RANDOM_MAX_MS - RANDOM_MIN_MS + 1)) + RANDOM_MIN_MS;
@@ -49,6 +49,13 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
   useEffect(() => { phaseRef.current = phase; },          [phase]);
   useEffect(() => { isRunningRef.current = isRunning; },  [isRunning]);
   useEffect(() => { isAuthRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  // Yêu cầu quyền thông báo hệ thống
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // ── Load face-api models ──────────────────────────────────────────────────
   useEffect(() => {
@@ -82,6 +89,32 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
       setIsPausedForVerification(true);
     }
     setPhase('notifying');
+
+    // Cảnh báo khi người dùng ở tab/ứng dụng khác
+    if (document.hidden) {
+      let activeNotification: Notification | null = null;
+      if ('Notification' in window && Notification.permission === 'granted') {
+        activeNotification = new Notification('⚠️ Yêu cầu xác minh khuôn mặt!', {
+          body: 'Vui lòng quay lại tab PowerSight ngay lập tức để xác minh danh tính và tiếp tục làm việc.',
+        });
+      }
+      if ('speechSynthesis' in window) {
+        const msg = new SpeechSynthesisUtterance('Hệ thống yêu cầu xác minh khuôn mặt. Vui lòng quay lại tab hệ thống ngay lập tức.');
+        msg.lang = 'vi-VN';
+        window.speechSynthesis.speak(msg);
+      }
+      const originalTitle = document.title;
+      let blink = false;
+      const interval = setInterval(() => {
+        document.title = blink ? '⚠️ XÁC MINH KHUÔN MẶT' : originalTitle;
+        blink = !blink;
+        if (!document.hidden || phaseRef.current !== 'notifying') {
+          clearInterval(interval);
+          document.title = originalTitle;
+          if (activeNotification) activeNotification.close();
+        }
+      }, 1000);
+    }
   }, [pauseForVerification]);
 
   // ── Schedule next check ───────────────────────────────────────────────────
@@ -134,7 +167,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
       setTimeout(() => {
         setPhase('idle');
         setIsPausedForVerification(false);
-        if (wasTimerRunningRef.current) resumeAfterVerification();
+        resumeAfterVerification(); // Luôn luôn bắt đầu/tiếp tục tính giờ
         scheduleNext();
       }, 2000);
     } else {
