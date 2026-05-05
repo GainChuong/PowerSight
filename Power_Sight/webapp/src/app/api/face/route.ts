@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
     const { data, error } = await supabase
       .from('employees')
-      .select('face_descriptor')
+      .select('face_id')
       .eq('emp_id', employeeId)
       .maybeSingle();
 
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ faceDescriptor: null });
     }
 
-    return NextResponse.json({ faceDescriptor: data?.face_descriptor ?? null });
+    return NextResponse.json({ faceDescriptor: data?.face_id ?? null });
   } catch (error) {
     console.error('[Face API] GET Error:', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
@@ -35,16 +35,20 @@ export async function GET(req: Request) {
 
 // POST /api/face
 // Body: { employeeId: string, descriptor: number[] | null }
-// Saves (or clears) face_descriptor in Supabase employees table
+// Saves (or clears) face_id in Supabase employees table
 export async function POST(req: Request) {
   try {
-    const { employeeId = TEST_EMPLOYEE_ID, descriptor } = await req.json();
+    const { employeeId, descriptor } = await req.json();
+
+    if (!employeeId) {
+      return NextResponse.json({ error: 'Missing employeeId' }, { status: 400 });
+    }
 
     // If descriptor is null, just clear the face from DB (re-register case)
     if (descriptor === null) {
       const { error } = await supabase
         .from('employees')
-        .update({ face_descriptor: null })
+        .update({ face_id: null })
         .eq('emp_id', employeeId);
       if (error) {
         console.warn('[Face API] Could not clear face descriptor:', error.message);
@@ -56,27 +60,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid descriptor format' }, { status: 400 });
     }
 
-    // Upsert employee record with face descriptor
-    // If EM001 already exists (from Excel data sync), this will update the face_descriptor column only
-    const { error } = await supabase
+    // Update employee record with face descriptor
+    const { data, error, count } = await supabase
       .from('employees')
-      .upsert(
-        {
-          emp_id: employeeId,
-          full_name: employeeId === TEST_EMPLOYEE_ID ? 'Test Employee 001' : employeeId,
-          email: `${employeeId.toLowerCase()}@powersight.local`,
-          sap_id: `SAP_${employeeId}`,
-          password_hash: 'test_hash',
-          face_descriptor: descriptor,
-        },
-        { onConflict: 'emp_id' }
-      );
+      .update({ face_id: descriptor })
+      .eq('emp_id', employeeId)
+      .select();
 
     if (error) {
-      console.error('[Face API] Supabase upsert error:', error);
+      console.error('[Face API] Supabase update error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    if (!data || data.length === 0) {
+      console.warn(`[Face API] Employee ${employeeId} not found for update`);
+      return NextResponse.json({ error: 'Không tìm thấy nhân viên trong hệ thống' }, { status: 404 });
+    }
+
+    console.log(`[Face API] Successfully updated face_id for ${employeeId}`);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Face API] POST Error:', error);

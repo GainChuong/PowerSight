@@ -6,8 +6,19 @@ import { checkFacePolicy } from '@/lib/tracking/violationEngine';
 import { usePathname } from 'next/navigation';
 
 export default function FloatingTrackerBar() {
-  const { isRunning, seconds, startTracking, pauseTracking, stopTracking } = useTracking();
+  const { 
+    isRunning, 
+    seconds, 
+    isViolation, 
+    isFullscreenViolation,
+    isFaceVerifying, 
+    startTracking, 
+    pauseTracking, 
+    stopTracking 
+  } = useTracking();
   const pathname = usePathname();
+  
+  const isBlocked = isViolation || isFaceVerifying || isFullscreenViolation;
 
   // Hide on tracker page since it has its own controls
   if (pathname === '/tracker') {
@@ -46,11 +57,36 @@ export default function FloatingTrackerBar() {
 
       <div style={{ display: 'flex', gap: '10px' }}>
         {!isRunning ? (
-          <button onClick={startTracking} className="btn-primary" style={{ padding: '6px 16px', background: 'linear-gradient(135deg, var(--success), #059669)' }}>
+          <button 
+            onClick={startTracking} 
+            className="btn-primary" 
+            disabled={isBlocked}
+            style={{ 
+              padding: '6px 16px', 
+              background: isBlocked ? '#475569' : 'linear-gradient(135deg, var(--success), #059669)',
+              opacity: isBlocked ? 0.6 : 1,
+              cursor: isBlocked ? 'not-allowed' : 'pointer'
+            }}
+          >
             <Play size={16} /> Bắt đầu
           </button>
         ) : (
-          <button onClick={pauseTracking} style={{ padding: '6px 16px', background: 'linear-gradient(135deg, var(--warning), #d97706)', border: 'none', color: 'white', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button 
+            onClick={pauseTracking} 
+            disabled={isBlocked}
+            style={{ 
+              padding: '6px 16px', 
+              background: isBlocked ? '#475569' : 'linear-gradient(135deg, var(--warning), #d97706)', 
+              border: 'none', 
+              color: 'white', 
+              borderRadius: '8px', 
+              cursor: isBlocked ? 'not-allowed' : 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px',
+              opacity: isBlocked ? 0.6 : 1
+            }}
+          >
             <Pause size={16} /> Tạm dừng
           </button>
         )}
@@ -59,17 +95,7 @@ export default function FloatingTrackerBar() {
         </button>
       </div>
       
-      {/* Simulation Buttons - Visible only when running for testing purposes */}
-      {isRunning && (
-        <div style={{ position: 'absolute', right: '20px', display: 'flex', gap: '10px' }}>
-          <button onClick={() => checkFacePolicy([], false)} style={{ fontSize: '0.8rem', padding: '4px 8px', background: 'var(--danger)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-             Simulate No Face
-          </button>
-          <button onClick={() => checkFacePolicy([{id: 1}], false)} style={{ fontSize: '0.8rem', padding: '4px 8px', background: 'var(--danger)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-             Simulate Wrong Face
-          </button>
-        </div>
-      )}
+
     </div>
   );
 }

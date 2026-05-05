@@ -79,40 +79,31 @@ export async function detectFaceDescriptor(
 }
 
 /**
- * Stores the face descriptor in localStorage as a JSON array.
+ * Stores the face descriptor (deprecated: use Supabase + Context)
  */
 export function storeRegisteredFace(descriptor: Float32Array) {
-  const arr = Array.from(descriptor);
-  localStorage.setItem(FACE_STORAGE_KEY, JSON.stringify(arr));
+  // Logic moved to Supabase API and memory context
 }
 
 /**
- * Retrieves the stored face descriptor from localStorage.
- * Returns null if not found.
+ * Retrieves the stored face descriptor (deprecated: use Supabase + Context)
  */
 export function getStoredFace(): Float32Array | null {
-  const raw = localStorage.getItem(FACE_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const arr = JSON.parse(raw) as number[];
-    return new Float32Array(arr);
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /**
- * Checks if a face has been registered.
+ * Checks if a face has been registered (deprecated: use Supabase + Context)
  */
 export function isFaceRegistered(): boolean {
-  return localStorage.getItem(FACE_STORAGE_KEY) !== null;
+  return false;
 }
 
 /**
- * Clears the registered face from localStorage.
+ * Clears the registered face (deprecated: use Supabase + Context)
  */
 export function clearRegisteredFace() {
-  localStorage.removeItem(FACE_STORAGE_KEY);
+  // Logic moved to Supabase API and memory context
 }
 
 /**

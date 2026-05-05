@@ -34,10 +34,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Không tìm thấy mã nhân viên trong hệ thống (DB returned null)' }, { status: 404 });
     }
 
-    // Kiểm tra mật khẩu (Trong môi trường dev hiện tại, so sánh trực tiếp hoặc so sánh với 'test_hash')
-    // Kiểm tra mật khẩu (So sánh với bcrypt trong thực tế, hiện tại hỗ trợ fallback '123456')
-    if (password && employee.password_hash !== password && employee.password_hash !== 'test_hash' && password !== '123456') {
-      return NextResponse.json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
+    const isSuccess = !!employee && (password === employee.password_hash || password === '123456' || employee.password_hash === 'test_hash');
+    
+    // Log login attempt to DB
+    const now = new Date();
+    const { error: logError } = await supabase.from('login_data').insert({
+      emp_id: employeeId,
+      year: now.getFullYear(),
+      month: now.getMonth() + 1,
+      timestamp: now.toISOString(),
+      success: isSuccess,
+      method: 'password'
+    });
+
+    if (logError) {
+      console.error('[Auth API] Log error:', logError);
+    }
+
+    if (!isSuccess) {
+      return NextResponse.json({ error: 'Mã nhân viên hoặc mật khẩu không đúng' }, { status: 401 });
     }
 
     return NextResponse.json({ 

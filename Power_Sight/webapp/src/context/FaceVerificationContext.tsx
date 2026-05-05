@@ -1,8 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
-import { useTracking } from './TrackingContext';
-import { useAuth } from './AuthContext';
+import { useAuth } from '@/context/AuthContext';
+import { useTracking } from '@/context/TrackingContext';
+import { logViolation } from '@/lib/tracking/violationEngine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type VerificationPhase = 'idle' | 'notifying' | 'scanning' | 'success' | 'fail';
@@ -12,8 +13,10 @@ interface FaceVerificationContextType {
   isPausedForVerification: boolean;
   lastResult: { match: boolean; distance: number } | null;
   modelsReady: boolean;
+  faceDescriptor: Float32Array | null;
   triggerVerification: () => void;
   confirmVerification: () => void;
+  setFaceDescriptor: (descriptor: Float32Array | null) => void;
 }
 
 // ─── Timing Config ────────────────────────────────────────────────────────────
@@ -37,6 +40,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
   const [isPausedForVerification, setIsPausedForVerification] = useState(false);
   const [lastResult, setLastResult] = useState<{ match: boolean; distance: number } | null>(null);
   const [modelsReady, setModelsReady] = useState(false);
+  const [faceDescriptor, setFaceDescriptor] = useState<Float32Array | null>(null);
 
   // Refs to avoid stale closures
   const schedulerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,6 +140,20 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
     }, delay);
   }, [clearScheduler, triggerNotification]);
 
+  useEffect(() => {
+    if (isAuthenticated && employeeId) {
+      // Fetch face descriptor from Supabase
+      fetch(`/api/face?employeeId=${employeeId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.faceDescriptor) {
+            setFaceDescriptor(new Float32Array(data.faceDescriptor));
+          }
+        })
+        .catch(err => console.error('[FaceVerification] Fetch descriptor error:', err));
+    }
+  }, [isAuthenticated, employeeId]);
+
   // ── Start/stop scheduling based on auth state ─────────────────────────────
   useEffect(() => {
     if (isAuthenticated && modelsReady) {
@@ -143,6 +161,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
       scheduleNext(FIRST_CHECK_MS);
     } else if (!isAuthenticated) {
       clearScheduler();
+      setFaceDescriptor(null);
       if (phaseRef.current !== 'idle') {
         setPhase('idle');
         setIsPausedForVerification(false);
@@ -167,34 +186,26 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
       setTimeout(() => {
         setPhase('idle');
         setIsPausedForVerification(false);
-        resumeAfterVerification(); // Luôn luôn bắt đầu/tiếp tục tính giờ
+        resumeAfterVerification();
         scheduleNext();
       }, 2000);
     } else {
       console.log('[FaceVerification] ❌ MISMATCH - logging violation...');
       setPhase('fail');
 
-      // Ghi vi phạm vào file Excel
+      // Ghi vi phạm vào DB và Excel thông qua centralized logic
       const similarity = result.distance < 999 ? Math.max(0, 1 - result.distance) : 0;
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const mm   = (now.getMonth() + 1).toString().padStart(2, '0');
-      const dd   = now.getDate().toString().padStart(2, '0');
-      const violationPayload = {
-        employeeId: employeeId || 'EM001',
-        sessionId: `SESS_LIVE_${yyyy}${mm}${dd}`,
-        details: `Face verification failed - Similarity: ${similarity.toFixed(3)}`,
-        similarity,
-      };
-      console.log('[FaceVerification] Posting violation:', violationPayload);
-      fetch('/api/tracker/violation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(violationPayload),
-      }).then(async res => {
-        const body = await res.json();
-        console.log('[FaceVerification] Violation API response:', res.status, body);
-      }).catch(err => console.warn('[FaceVerification] Error logging violation:', err));
+      logViolation(
+        'face_mismatch',
+        'critical',
+        { 
+          reason: 'Face verification failed', 
+          similarity: similarity.toFixed(3),
+          distance: result.distance 
+        },
+        employeeId || 'EM001',
+        'Face'
+      );
 
       // Sau 3 giây xóa UI fail, giữ timer đã dừng, thử lại sau 1 phút
       setTimeout(() => {
@@ -218,7 +229,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
 
   return (
     <FaceVerificationContext.Provider
-      value={{ phase, isPausedForVerification, lastResult, modelsReady, triggerVerification, confirmVerification }}
+      value={{ phase, isPausedForVerification, lastResult, modelsReady, faceDescriptor, triggerVerification, confirmVerification, setFaceDescriptor }}
     >
       {children}
       {phase !== 'idle' && (
@@ -227,6 +238,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
           lastResult={lastResult}
           onConfirm={confirmVerification}
           onVerificationComplete={handleVerificationComplete}
+          referenceDescriptor={faceDescriptor}
         />
       )}
     </FaceVerificationContext.Provider>
@@ -241,13 +253,11 @@ export function useFaceVerification() {
 
 // ─── Modal Component ──────────────────────────────────────────────────────────
 interface ModalProps {
-  phase: VerificationPhase;
-  lastResult: { match: boolean; distance: number } | null;
-  onConfirm: () => void;
   onVerificationComplete: (result: { match: boolean; distance: number }) => void;
+  referenceDescriptor: Float32Array | null;
 }
 
-function FaceVerificationModal({ phase, lastResult, onConfirm, onVerificationComplete }: ModalProps) {
+function FaceVerificationModal({ phase, lastResult, onConfirm, onVerificationComplete, referenceDescriptor }: ModalProps) {
   const videoRef      = useRef<HTMLVideoElement>(null);
   const streamRef     = useRef<MediaStream | null>(null);
   const scannedRef    = useRef(false);
@@ -273,10 +283,8 @@ function FaceVerificationModal({ phase, lastResult, onConfirm, onVerificationCom
         let bestResult: { match: boolean; distance: number } | null = null;
         for (let i = 0; i < 3; i++) {
           if (cancelled) break;
-          const descriptor = await detectFaceDescriptor(videoRef.current!);
-          const stored     = getStoredFace();
-          if (descriptor && stored) {
-            const r = compareFaces(stored, descriptor);
+          if (descriptor && referenceDescriptor) {
+            const r = compareFaces(referenceDescriptor, descriptor);
             if (!bestResult || r.distance < bestResult.distance) bestResult = r;
             if (r.match) break;
           }

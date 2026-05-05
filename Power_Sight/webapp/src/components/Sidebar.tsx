@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Clock, BarChart2, Calendar, MessageSquare, UserCircle, Mail, HardDrive, Database, Orbit, ExternalLink } from 'lucide-react';
+import { Clock, BarChart2, Calendar, MessageSquare, UserCircle, Mail, HardDrive, Database, Orbit, ExternalLink, LogOut } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { logout, employeeId } = useAuth();
 
   const predefinedTabs = [
     { path: '/tracker', name: 'Time Tracker', icon: Clock },
@@ -61,6 +63,11 @@ export default function Sidebar() {
               <Link
                 href={`/viewer/${app.id}`}
                 className={`nav-item${isActive ? ' active' : ''}`}
+                onClick={() => {
+                  if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                  }
+                }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <app.icon size={18} />
@@ -74,15 +81,34 @@ export default function Sidebar() {
       </ul>
 
       <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-         <div className="nav-item" style={{ cursor: 'default' }}>
+         <div className="nav-item" style={{ cursor: 'default', marginBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                <UserCircle size={28} color="var(--text-muted)" />
                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                 <span style={{ fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 'bold' }}>EMP-2026 (Bạn)</span>
+                 <span style={{ fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 'bold' }}>{employeeId || 'Chưa xác định'} (Bạn)</span>
                  <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>Đang hoạt động</span>
                </div>
             </div>
          </div>
+         
+         <button 
+           onClick={logout}
+           className="nav-item" 
+           style={{ 
+             width: '100%', 
+             background: 'none', 
+             border: 'none', 
+             textAlign: 'left', 
+             color: '#fca5a5', 
+             marginTop: '4px',
+             transition: 'all 0.2s'
+           }}
+         >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+               <LogOut size={18} />
+               <span>Đăng xuất</span>
+            </div>
+         </button>
       </div>
     </div>
   );

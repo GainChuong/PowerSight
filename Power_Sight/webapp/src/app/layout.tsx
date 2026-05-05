@@ -6,6 +6,7 @@ import SafeWorkspace from "@/components/SafeWorkspace";
 import FloatingTrackerBar from "@/components/FloatingTrackerBar";
 import { Providers } from "@/components/Providers";
 import AuthGuard from "@/components/AuthGuard";
+import FullscreenEnforcer from "@/components/FullscreenEnforcer";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -28,6 +29,7 @@ export default function RootLayout({
               <Sidebar />
               <div className="main-content" style={{ paddingTop: '60px' }}>
                 <FloatingTrackerBar />
+                <FullscreenEnforcer />
                 <SafeWorkspace>
                   {children}
                 </SafeWorkspace>

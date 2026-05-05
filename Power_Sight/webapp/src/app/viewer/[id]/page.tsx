@@ -64,6 +64,14 @@ export default function ViewerPage() {
     if (!isRunning) {
       startTracking();
     }
+
+    // Force to fullscreen for focused work
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.warn(`[Viewer] Fullscreen request failed: ${err.message}`);
+      });
+    }
+
     setSessionStart(new Date());
     setOpened(true);
     openedRef.current = true;
@@ -116,7 +124,16 @@ export default function ViewerPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             <StatusBadge isRunning={isRunning} />
             {!isRunning && (
-              <button onClick={startTracking} className="btn-primary" style={{ padding: '6px 16px', fontSize: '0.85rem', background: 'linear-gradient(135deg, var(--success), #059669)' }}>
+              <button 
+                onClick={() => {
+                  startTracking();
+                  if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                  }
+                }} 
+                className="btn-primary" 
+                style={{ padding: '6px 16px', fontSize: '0.85rem', background: 'linear-gradient(135deg, var(--success), #059669)' }}
+              >
                 Bắt đầu làm việc
               </button>
             )}

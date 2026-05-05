@@ -1,5 +1,3 @@
-import { supabase } from '@/lib/supabase';
-
 // Define the state for the tracking engine
 interface TrackerState {
   lastPauseTime: number;
@@ -30,24 +28,39 @@ export function shouldProcessFrame(): boolean {
   return true;
 }
 
-export async function logViolation(type: string, severity: 'warning' | 'critical', details: Record<string, unknown> = {}) {
+export async function logViolation(
+  type: string, 
+  severity: 'warning' | 'critical', 
+  details: Record<string, unknown> = {},
+  employeeId?: string,
+  module: string = 'Web Client'
+) {
   console.warn(`[VIOLATION ENFORCED] Type: ${type}, Severity: ${severity}`, details);
+  
   try {
-    const { error } = await supabase.from('work_logs').insert([{
-      event_type: type,
-      severity: severity,
-      details: JSON.stringify(details),
-      is_fraud: true,
-      module: 'Face/Mouse' // Default module or could be passed in
-    }]);
-    
-    if (error) {
-      console.error("Supabase insert error:", error);
-    } else {
-      console.log(`✅ Violation saved to DB: ${type}`);
-    }
+    // Call the centralized violation API
+    // This API handles all logging logic (currently Supabase)
+    fetch('/api/tracker/violation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employeeId: employeeId || 'EM001',
+        eventType: type,
+        details: JSON.stringify(details),
+        severity: severity.toUpperCase(),
+        isFraud: true,
+        module: module
+      })
+    }).then(res => {
+      if (res.ok) {
+        console.log(`✅ Violation saved via API: ${type}`);
+      } else {
+        console.error(`❌ Violation API failed with status ${res.status}`);
+      }
+    }).catch(apiErr => console.error("Violation API call failed:", apiErr));
+
   } catch (error) {
-    console.error("Violation engine failed to write to DB:", error);
+    console.error("Violation engine failed to record violation:", error);
   }
 }
 
@@ -56,30 +69,24 @@ export async function logViolation(type: string, severity: 'warning' | 'critical
  * Rule 1: Pause 3 times in 10 seconds -> Violation
  * Rule 2: Pause over 2 hours -> Violation (Checked later via total/interval)
  */
-export function handleTrackerPause() {
+export function handleTrackerPause(employeeId?: string) {
   const now = Date.now();
   state.pauseTimestamps.push(now);
 
   // Clean up timestamps older than 10 seconds
   state.pauseTimestamps = state.pauseTimestamps.filter(t => now - t <= 10000);
 
-  if (state.pauseTimestamps.length >= 3) {
-    logViolation('pause_frequent', 'critical', { reason: 'Paused 3 times within 10 seconds' });
-    // Reset to avoid spamming
-    state.pauseTimestamps = [];
-  }
-
   state.lastPauseTime = now;
 }
 
-export function handleTrackerResume() {
+export function handleTrackerResume(employeeId?: string) {
   if (state.lastPauseTime > 0) {
     const pausedDuration = Date.now() - state.lastPauseTime;
     state.totalPausedTime += pausedDuration;
 
     // Rule 2: Paused for over 2 hours total in a session
     if (state.totalPausedTime > 2 * 60 * 60 * 1000) {
-      logViolation('pause_long', 'critical', { reason: 'Paused for over 2 hours total', duration: state.totalPausedTime });
+      logViolation('pause_long', 'critical', { reason: 'Paused for over 2 hours total', duration: state.totalPausedTime }, employeeId);
     }
   }
   state.lastPauseTime = 0;

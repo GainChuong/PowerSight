@@ -3,17 +3,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound } from 'lucide-react';
-
-const EMPLOYEE_ID = 'EM001';
+import { useFaceVerification } from '@/context/FaceVerificationContext';
 
 export default function Login() {
   const { login } = useAuth();
-
-  const [password, setPassword]                  = useState('');
+  const { setFaceDescriptor } = useFaceVerification();
+  const [empId, setEmpId] = useState('');
+  const [password, setPassword] = useState('password123'); // Default for demo
 
   // Face registration state
   const [faceRegistered, setFaceRegistered]     = useState(false);
-  const [phase, setPhase]                        = useState<'checking' | 'register' | 'capturing' | 'processing' | 'done'>('checking');
+  const [phase, setPhase]                        = useState<'enter_id' | 'checking' | 'register' | 'capturing' | 'processing' | 'done'>('enter_id');
   const [error, setError]                        = useState('');
   const [modelsLoading, setModelsLoading]        = useState(true);
   const [loginLoading, setLoginLoading]          = useState(false);
@@ -21,45 +21,56 @@ export default function Login() {
   const videoRef  = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ── Kiểm tra khuôn mặt đã đăng ký trong DB chưa ────────────────────────
+  // ── Khởi tạo mô hình AI ──────────────────────────────────────────────────
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
+    async function load() {
       try {
-        const { loadFaceApi, storeRegisteredFace } = await import('@/lib/tracking/faceUtils');
-
-        // Hỏi API face (Supabase) xem đã lưu chưa
-        const res  = await fetch(`/api/face?employeeId=${EMPLOYEE_ID}`);
-        const data = await res.json();
-
-        if (!cancelled) {
-          if (data.faceDescriptor && Array.isArray(data.faceDescriptor)) {
-            // Có trong DB → khôi phục vào localStorage để dùng khi quét
-            storeRegisteredFace(new Float32Array(data.faceDescriptor));
-            setFaceRegistered(true);
-            setPhase('done');
-          } else {
-            // Chưa có → hiện form đăng ký
-            setPhase('register');
-          }
-        }
-
+        const { loadFaceApi } = await import('@/lib/tracking/faceUtils');
         await loadFaceApi();
-        if (!cancelled) setModelsLoading(false);
+        setModelsLoading(false);
       } catch (err) {
-        console.error('[Login] Init error:', err);
-        if (!cancelled) {
-          // Fallback: kiểm tra localStorage
-          const { isFaceRegistered, loadFaceApi } = await import('@/lib/tracking/faceUtils');
-          setPhase(isFaceRegistered() ? 'done' : 'register');
-          setFaceRegistered(isFaceRegistered());
-          await loadFaceApi().catch(() => {});
-          setModelsLoading(false);
-        }
+        console.error('[Login] Model load error:', err);
+        setError('Không thể tải mô hình nhận diện khuôn mặt.');
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    load();
   }, []);
+
+  // ── Kiểm tra ID nhân viên ──────────────────────────────────────────────
+  const handleCheckId = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!empId.trim()) {
+      setError('Vui lòng nhập mã nhân viên');
+      return;
+    }
+    setError('');
+    setPhase('checking');
+
+    try {
+      // Try to enter fullscreen on first interaction
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      
+      // 1. Kiểm tra trên server (Supabase)
+      const res = await fetch(`/api/face?employeeId=${empId}`);
+      const data = await res.json();
+
+      if (data.faceDescriptor) {
+        // Chuyển đổi từ mảng số về Float32Array
+        const descriptor = new Float32Array(data.faceDescriptor);
+        setFaceDescriptor(descriptor);
+        setFaceRegistered(true);
+        setPhase('done');
+      } else {
+        setFaceRegistered(false);
+        setPhase('register');
+      }
+    } catch (err) {
+      console.error('[Login] Check ID error:', err);
+      setPhase('register'); // Fallback to register if check fails
+    }
+  };
 
   // ── Mở camera ───────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
@@ -99,14 +110,14 @@ export default function Login() {
         return;
       }
 
-      // Lưu vào localStorage
-      storeRegisteredFace(descriptor);
+      // Lưu vào context (memory)
+      setFaceDescriptor(descriptor);
 
       // Lưu lên Supabase
       const saveRes = await fetch('/api/face', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId: EMPLOYEE_ID, descriptor: Array.from(descriptor) }),
+        body: JSON.stringify({ employeeId: empId, descriptor: Array.from(descriptor) }),
       });
       if (!saveRes.ok) {
         console.warn('[Login] Face saved locally but not to DB:', await saveRes.text());
@@ -123,7 +134,7 @@ export default function Login() {
       setError('Lỗi khi xử lý khuôn mặt. Vui lòng thử lại.');
       setPhase('capturing');
     }
-  }, []);
+  }, [empId]);
 
   // ── Dọn dẹp camera khi unmount ──────────────────────────────────────────
   useEffect(() => {
@@ -133,13 +144,12 @@ export default function Login() {
   // ── Đăng ký lại khuôn mặt ───────────────────────────────────────────────
   const handleReRegister = async () => {
     try {
-      const { clearRegisteredFace } = await import('@/lib/tracking/faceUtils');
-      clearRegisteredFace();
+      setFaceDescriptor(null);
       // Xóa trong DB
       await fetch('/api/face', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId: EMPLOYEE_ID, descriptor: null }),
+        body: JSON.stringify({ employeeId: empId, descriptor: null }),
       }).catch(() => {});
       setFaceRegistered(false);
       setPhase('register');
@@ -159,7 +169,7 @@ export default function Login() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          employeeId: EMPLOYEE_ID,
+          employeeId: empId,
           password: password 
         }),
       });
@@ -169,7 +179,7 @@ export default function Login() {
         return;
       }
       try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
-      login(EMPLOYEE_ID);
+      login(empId);
     } catch {
       setError('Lỗi kết nối. Vui lòng thử lại sau.');
     } finally {
@@ -211,13 +221,57 @@ export default function Login() {
 
         {/* Bước chỉ báo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '28px' }}>
-          <StepDot active={!faceRegistered} completed={faceRegistered} label="1. Đăng ký mặt" />
-          <div style={{ width: '44px', height: '2px', background: faceRegistered ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px', transition: 'background 0.4s' }} />
-          <StepDot active={faceRegistered} completed={false} label="2. Đăng nhập" />
+          <StepDot active={phase === 'enter_id'} completed={phase !== 'enter_id'} label="1. Mã NV" />
+          <div style={{ width: '30px', height: '2px', background: phase !== 'enter_id' ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px' }} />
+          <StepDot active={!faceRegistered && phase !== 'enter_id'} completed={faceRegistered} label="2. Khuôn mặt" />
+          <div style={{ width: '30px', height: '2px', background: faceRegistered ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px' }} />
+          <StepDot active={faceRegistered} completed={false} label="3. Đăng nhập" />
         </div>
 
+        {/* ── BƯỚC 0: Nhập mã nhân viên ── */}
+        {phase === 'enter_id' && (
+          <form onSubmit={handleCheckId} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+              <h3 style={{ color: '#fff', margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 700 }}>Chào mừng trở lại</h3>
+              <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: '0.9rem' }}>Vui lòng nhập mã nhân viên để bắt đầu</p>
+            </div>
+            
+            <div style={{ position: 'relative' }}>
+              <UserCircle size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="text"
+                placeholder="Ví dụ: EM001"
+                value={empId}
+                onChange={e => setEmpId(e.target.value.toUpperCase())}
+                required
+                autoFocus
+                style={{
+                  width: '100%', padding: '14px 14px 14px 44px',
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '12px', color: '#fff', fontSize: '1rem', outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              style={{
+                width: '100%', padding: '14px',
+                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                border: 'none', borderRadius: '12px',
+                color: 'white', fontWeight: 700, fontSize: '1rem',
+                cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(59,130,246,0.35)',
+              }}
+            >
+              Tiếp tục
+            </button>
+          </form>
+        )}
+
         {/* ── BƯỚC 1: Đăng ký khuôn mặt ── */}
-        {!faceRegistered && (
+        {!faceRegistered && phase !== 'enter_id' && (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
 
             {phase === 'checking' && (
@@ -329,13 +383,13 @@ export default function Login() {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <CheckCircle size={18} />
-                Khuôn mặt đã được đăng ký (EM001)
+                Mã NV: {empId}
               </div>
               <button
                 onClick={handleReRegister}
                 style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
               >
-                Đăng ký lại
+                Đăng ký lại mặt
               </button>
             </div>
 
@@ -348,7 +402,7 @@ export default function Login() {
                   <UserCircle size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                   <input
                     type="text"
-                    value={EMPLOYEE_ID}
+                    value={empId}
                     readOnly
                     style={{
                       width: '100%', padding: '12px 12px 12px 40px',

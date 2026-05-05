@@ -13,9 +13,12 @@ const ALLOWED_PATTERNS = [
   'localhost',
   '127.0.0.1',
   'google.com',
+  'drive.google.com',
   'gmail.com',
   'sap.com',
   'ucc.cit.tum.de',
+  's36.gb.ucc.cit.tum.de',
+  'cit.tum.de',
   'chrome://',
   'chrome-extension://',
   'edge://',
@@ -23,6 +26,30 @@ const ALLOWED_PATTERNS = [
   'brave://',
   'about:',
 ];
+
+// Domains that trigger automatic fullscreen enforcement
+const PROTECTED_DOMAINS = [
+  'sap.com',
+  'google.com',
+  'gmail.com',
+  'localhost',
+  'ucc.cit.tum.de'
+];
+
+// Auto-fullscreen enforcement for protected domains
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url) {
+    const isProtected = PROTECTED_DOMAINS.some(domain => tab.url.includes(domain));
+    if (isProtected) {
+      chrome.windows.get(tab.windowId, (win) => {
+        if (win.state !== 'fullscreen') {
+          console.log('[PowerSight] Enforcing fullscreen for protected domain:', tab.url);
+          chrome.windows.update(tab.windowId, { state: 'fullscreen' });
+        }
+      });
+    }
+  }
+});
 
 // ---- Face Verification Config ----
 const FACE_VERIFY_MIN_MS = 60_000;  // 1 minute
@@ -49,6 +76,7 @@ let timerState = {
   currentUrl: '',
   isUrlAllowed: true,
   runSince: 0,        // Date.now() when current running segment started
+  employeeId: 'EM001', // Default employee ID
 };
 
 // ---- Persistence Helpers ----
@@ -81,6 +109,7 @@ async function restoreState() {
       timerState.isUrlAllowed = ts.isUrlAllowed !== false;
       timerState.runSince = ts.runSince || 0;
       timerState.isRunning = ts.isRunning || false;
+      timerState.employeeId = ts.employeeId || 'EM001';
 
       // If timer was running when SW died, the elapsed time since runSince
       // hasn't been captured yet. We keep isRunning=true and runSince as-is
@@ -143,6 +172,14 @@ function startTimer() {
   }
   faceVerifyState.isPausedForFace = false;
   faceVerifyState.phase = 'idle';
+
+  // Force fullscreen on start
+  chrome.windows.getCurrent((win) => {
+    if (!chrome.runtime.lastError && win) {
+      chrome.windows.update(win.id, { state: 'fullscreen' });
+    }
+  });
+
   startKeepalive();
   saveState();
   broadcastState();
@@ -178,6 +215,14 @@ function resumeTimerAfterFace() {
   faceVerifyState.phase = 'idle';
   timerState.isRunning = true;
   timerState.runSince = Date.now();
+
+  // Re-ensure fullscreen after verification
+  chrome.windows.getCurrent((win) => {
+    if (!chrome.runtime.lastError && win) {
+      chrome.windows.update(win.id, { state: 'fullscreen' });
+    }
+  });
+
   startKeepalive();
   saveState();
   broadcastState();
@@ -214,14 +259,31 @@ function getActiveState() {
   return state;
 }
 
-function broadcastState() {
+function broadcastState(activeTabOnly = false) {
   const msg = { type: 'STATE_UPDATE', state: getActiveState() };
+  
+  if (activeTabOnly) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0] && tabs[0].id) {
+        chrome.tabs.sendMessage(tabs[0].id, msg).catch(() => { });
+      }
+    });
+    return;
+  }
+
   // Send to all content scripts
   chrome.tabs.query({}, (tabs) => {
     if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
     if (!tabs) return;
+    
+    // Prioritize active tab
+    const activeTab = tabs.find(t => t.active && t.highlighted);
+    if (activeTab && activeTab.id) {
+      chrome.tabs.sendMessage(activeTab.id, msg).catch(() => { });
+    }
+
     tabs.forEach((tab) => {
-      if (tab.id) {
+      if (tab.id && (!activeTab || tab.id !== activeTab.id)) {
         chrome.tabs.sendMessage(tab.id, msg).catch(() => { });
       }
     });
@@ -241,41 +303,59 @@ function clearFaceVerifyTimer() {
 }
 
 function scheduleFaceVerification(delayMs) {
-  // Webapp handles face verification. The extension no longer schedules it independently
-  // to prevent camera conflicts and double verification loops.
   clearFaceVerifyTimer();
-  return;
+  if (!timerState.isRunning) return;
+
+  const delay = delayMs || randomFaceInterval();
+  console.log(`[PowerSight] 🕒 Next face verification in ${Math.round(delay / 1000)}s`);
+
+  faceVerifyTimer = setTimeout(() => {
+    triggerFaceVerification();
+  }, delay);
 }
 
 function triggerFaceVerification() {
-  console.log('[PowerSight] 🔔 Triggering face verification!');
-
-  // Pause timer
-  pauseTimerForFace();
-  faceVerifyState.phase = 'warning';
-
-  // Send FACE_VERIFY_START to all content scripts (active tab gets the modal)
-  const msg = { type: 'FACE_VERIFY_START' };
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
+    
+    if (tabs && tabs[0]) {
+      const url = tabs[0].url || '';
+      const isLoginPage = url.includes('/login') || url.includes('/auth') || url.includes('accounts.google.com');
+      
+      if (isLoginPage) {
+        console.log('[PowerSight] 🚫 Skipping face verification on login/auth page:', url);
+        // Reschedule in 30s to try again later when they might be logged in
+        scheduleFaceVerification(30000);
+        return;
+      }
+    }
+
+    console.log('[PowerSight] 🔔 Triggering face verification!');
+
+    // Pause timer
+    pauseTimerForFace();
+    faceVerifyState.phase = 'warning';
+
+    // Send FACE_VERIFY_START to active tab
+    const msg = { type: 'FACE_VERIFY_START' };
     if (tabs && tabs[0] && tabs[0].id) {
       chrome.tabs.sendMessage(tabs[0].id, msg).catch(() => {
         console.warn('[PowerSight] Could not send face verify to active tab');
       });
     }
-  });
 
-  // Also show a notification as backup
-  chrome.notifications.create('face-verify', {
-    type: 'basic',
-    iconUrl: 'icons/icon128.png',
-    title: '⚠️ Xác minh khuôn mặt',
-    message: 'Hệ thống cần xác minh danh tính của bạn. Vui lòng nhìn vào camera.',
-    priority: 2,
-    requireInteraction: true,
-  });
+    // Also show a notification as backup
+    chrome.notifications.create('face-verify', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: '⚠️ Xác minh khuôn mặt',
+      message: 'Hệ đồng cần xác minh danh tính của bạn. Vui lòng nhìn vào camera.',
+      priority: 2,
+      requireInteraction: true,
+    });
 
-  broadcastState();
+    broadcastState();
+  });
 }
 
 // ---- URL Monitoring ----
@@ -284,23 +364,16 @@ function isUrlAllowed(url) {
   return ALLOWED_PATTERNS.some((pattern) => url.includes(pattern));
 }
 
-function checkCurrentTab() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
-    if (!tabs || !tabs[0]) return;
-    const url = tabs[0].url || '';
+function checkCurrentTab(providedTab = null) {
+  const processTab = (tab) => {
+    if (!tab) return;
+    const url = tab.url || '';
     timerState.currentUrl = url;
     const allowed = isUrlAllowed(url);
     timerState.isUrlAllowed = allowed;
 
     if (!allowed && timerState.isRunning) {
-      // Auto-pause and log violation
-      pauseTimer(true);
-      logViolation('unauthorized_website', 'critical', {
-        reason: 'Employee accessed non-allowed website',
-        url: url,
-      });
-      // Show notification
+      // 1. Show notification INSTANTLY
       chrome.notifications.create('violation-url', {
         type: 'basic',
         iconUrl: 'icons/icon128.png',
@@ -308,49 +381,64 @@ function checkCurrentTab() {
         message: `Bạn đang truy cập trang không nằm trong danh sách cho phép. Timer đã tạm dừng. Quay lại làm việc ngay.`,
         priority: 2,
       });
+
+      // 2. Pause and Broadcast
+      pauseTimer(true);
+      broadcastState(true); // Active tab only for speed
+
+      // 3. Log asynchronously
+      logViolation('unauthorized_website', 'critical', {
+        reason: 'Employee accessed non-allowed website',
+        url: url,
+      });
     } else if (allowed && timerState.isPausedByViolation) {
-      // Auto-resume when returning to allowed site
       startTimer();
+    } else {
+      broadcastState(true);
     }
 
-    broadcastState();
-  });
+    // If waiting for face verify, re-trigger modal on the now-active tab
+    if (faceVerifyState.isPausedForFace && (faceVerifyState.phase === 'warning' || faceVerifyState.phase === 'fail')) {
+      chrome.tabs.sendMessage(tab.id, { type: 'FACE_VERIFY_START' }).catch(() => {});
+    }
+  };
+
+  if (providedTab) {
+    processTab(providedTab);
+  } else {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
+      if (tabs && tabs[0]) processTab(tabs[0]);
+    });
+  }
 }
 
-// Tab change listeners
-chrome.tabs.onActivated.addListener(() => {
-  setTimeout(checkCurrentTab, 300);
+// ---- Fullscreen Enforcement ----
+// Aggressively re-enforces fullscreen if user tries to exit it while timer is running
+chrome.windows.onBoundsChanged.addListener((window) => {
+  if (timerState.isRunning && window.state !== 'fullscreen') {
+    chrome.windows.update(window.id, { state: 'fullscreen' });
+  }
 });
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url || changeInfo.status === 'complete') {
-    setTimeout(checkCurrentTab, 300);
+
+// Tab change listeners
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  // Very small delay to allow URL to be ready
+  setTimeout(() => {
+    checkCurrentTab();
+  }, 50);
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url) {
+    // If URL changed, check immediately
+    checkCurrentTab(tab);
+  } else if (changeInfo.status === 'complete') {
+    checkCurrentTab(tab);
   }
 });
 
 // ---- Browser/Desktop Focus Detection ----
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Browser lost focus — user switched to desktop app
-    if (timerState.isRunning) {
-      pauseTimer(true);
-      logViolation('browser_unfocus', 'critical', {
-        reason: 'Employee switched to desktop application',
-      });
-      chrome.notifications.create('violation-desktop', {
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: '⚠️ Vi phạm: Rời khỏi trình duyệt',
-        message: 'Hệ thống phát hiện bạn đang sử dụng ứng dụng desktop. Timer đã tạm dừng. Vui lòng quay lại trình duyệt để tiếp tục làm việc.',
-        priority: 2,
-      });
-    }
-  } else {
-    // Browser regained focus
-    if (timerState.isPausedByViolation) {
-      checkCurrentTab(); // will auto-resume if on allowed site
-    }
-  }
-});
+// Window focus monitoring removed as requested.
 
 // ---- Idle Detection (screen lock, AFK) ----
 chrome.idle.setDetectionInterval(300); // 5 minutes
@@ -372,8 +460,9 @@ chrome.idle.onStateChanged.addListener((newState) => {
 // ---- Supabase Logging ----
 async function logViolation(type, severity, details) {
   console.warn(`[PowerSight] Violation: ${type}`, details);
+  const now = new Date();
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/work_logs`, {
+    await fetch(`${SUPABASE_URL}/rest/v1/fraud_events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -382,15 +471,43 @@ async function logViolation(type, severity, details) {
         'Prefer': 'return=minimal',
       },
       body: JSON.stringify({
+        emp_id: timerState.employeeId || 'EM001',
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
         event_type: type,
         severity: severity,
         details: JSON.stringify(details),
-        is_fraud: true,
+        is_fraud: 1, // Store as integer for is_fraud column
         module: 'Extension',
+        timestamp: now.toISOString()
       }),
     });
   } catch (err) {
     console.error('[PowerSight] Failed to log violation:', err);
+  }
+}
+
+// ---- Face Descriptor Sync ----
+async function syncFaceDescriptor() {
+  if (!timerState.employeeId) return;
+  
+  console.log('[PowerSight] 🔄 Syncing face descriptor from Supabase for:', timerState.employeeId);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/employees?emp_id=eq.${timerState.employeeId}&select=face_id`, {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+      }
+    });
+    const data = await res.json();
+    if (data && data[0] && data[0].face_id) {
+      console.log('[PowerSight] ✅ Face descriptor synced successfully');
+      await chrome.storage.local.set({ powerSight_faceDescriptor: data[0].face_id });
+    } else {
+      console.warn('[PowerSight] ⚠️ No face descriptor found in Supabase');
+    }
+  } catch (err) {
+    console.error('[PowerSight] Failed to sync face descriptor:', err);
   }
 }
 
@@ -412,15 +529,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       stopTimer();
       sendResponse(getActiveState());
       break;
+    case 'FORCE_FULLSCREEN':
+      if (sender.tab && sender.tab.windowId) {
+        chrome.windows.update(sender.tab.windowId, { state: 'fullscreen' });
+      } else {
+        chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
+      }
+      sendResponse(getActiveState());
+      break;
+    case 'VIOLATION':
+      logViolation(msg.violationType || msg.type, msg.severity || 'warning', msg.details || {});
+      sendResponse(getActiveState());
+      break;
+    case 'SET_CONFIG':
+      if (msg.config) {
+        if (msg.config.employeeId) {
+          const oldId = timerState.employeeId;
+          timerState.employeeId = msg.config.employeeId;
+          if (oldId !== timerState.employeeId) {
+            syncFaceDescriptor();
+          }
+        }
+        saveState();
+      }
+      sendResponse({ ok: true });
+      break;
     case 'GO_HOME':
       chrome.tabs.query({ url: '*://localhost/*' }, (tabs) => {
         if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
         if (tabs && tabs.length > 0) {
           const existingTab = tabs[0];
           chrome.tabs.update(existingTab.id, { active: true });
-          chrome.windows.update(existingTab.windowId, { focused: true });
+          chrome.windows.update(existingTab.windowId, { focused: true, state: 'fullscreen' });
         } else {
-          chrome.tabs.create({ url: DASHBOARD_URL });
+          chrome.tabs.create({ url: DASHBOARD_URL }, (tab) => {
+             chrome.windows.update(tab.windowId, { state: 'fullscreen' });
+          });
         }
       });
       sendResponse({ ok: true });
@@ -430,10 +574,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (chrome.runtime.lastError) { const _ = chrome.runtime.lastError; }
         if (tabs && tabs.length > 0) {
           const existingTab = tabs[0];
-          chrome.tabs.update(existingTab.id, { active: true });
-          chrome.windows.update(existingTab.windowId, { focused: true });
+          // Always navigate to the specific URL to ensure we're not on a 'wrong link'
+          chrome.tabs.update(existingTab.id, { url: msg.url, active: true });
+          chrome.windows.update(existingTab.windowId, { focused: true, state: 'fullscreen' });
         } else {
-          chrome.tabs.create({ url: msg.url });
+          chrome.tabs.create({ url: msg.url }, (tab) => {
+            chrome.windows.update(tab.windowId, { state: 'fullscreen' });
+          });
         }
       });
       sendResponse({ ok: true });
@@ -491,6 +638,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       sendResponse({ ok: true });
       break;
+    case 'FORCE_FULLSCREEN':
+      chrome.windows.getCurrent((win) => {
+        chrome.windows.update(win.id, { state: 'fullscreen' });
+      });
+      sendResponse({ ok: true });
+      break;
     default:
       sendResponse({ error: 'Unknown message type' });
   }
@@ -514,6 +667,7 @@ chrome.notifications.onClicked.addListener((notifId) => {
 // ---- Initialize: restore state then check tab ----
 restoreState().then(() => {
   checkCurrentTab();
+  syncFaceDescriptor();
   if (timerState.isRunning) {
     startKeepalive();
     scheduleFaceVerification();

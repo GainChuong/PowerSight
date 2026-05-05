@@ -55,6 +55,9 @@
             <button id="ps-btn-sap" class="ps-dropdown-item">
               <span class="ps-item-icon">📊</span> SAP System
             </button>
+            <button id="ps-btn-drive" class="ps-dropdown-item">
+              <span class="ps-item-icon">📁</span> Google Drive
+            </button>
           </div>
         </div>
 
@@ -135,33 +138,53 @@
     if (bar) {
       timerEl.textContent = formatTime(displaySeconds);
 
-      // Check if paused for face verification
-      if (localState.faceVerify && localState.faceVerify.isPausedForFace) {
-        statusText.textContent = 'Xác minh mặt';
-        statusDot.className = 'ps-dot ps-dot-warning';
-        btnStart.style.display = 'none';
+      // --- Button Visibility Logic based on URL Allowed ---
+      if (localState.isUrlAllowed === false) {
+        // Disallowed site: Show all but disable START
+        btnStart.style.display = 'inline-flex';
+        btnStart.disabled = true;
         btnPause.style.display = 'none';
-      } else if (localState.isPausedByViolation) {
-        statusText.textContent = localState.isUrlAllowed === false ? 'SAI TRANG WEB' : 'VI PHẠM AFK/DESKTOP';
+        btnStop.style.display = 'inline-flex';
+        
+        statusText.textContent = 'SAI TRANG WEB';
         statusDot.className = 'ps-dot ps-dot-danger';
-        btnStart.style.display = 'none';
-        btnPause.style.display = 'none';
-
+        
         if (isMinimized) {
           isMinimized = false;
           bar.classList.remove('ps-minimized');
           btnToggle.textContent = '🔽';
         }
-      } else if (localState.isRunning) {
-        statusText.textContent = 'Đang hoạt động';
-        statusDot.className = 'ps-dot ps-dot-active';
-        btnStart.style.display = 'none';
-        btnPause.style.display = 'inline-flex';
       } else {
-        statusText.textContent = displaySeconds > 0 ? 'Tạm dừng' : 'Chưa bắt đầu';
-        statusDot.className = 'ps-dot ps-dot-idle';
-        btnStart.style.display = 'inline-flex';
-        btnPause.style.display = 'none';
+        // Allowed site: Show normal controls
+        btnStop.style.display = 'inline-flex';
+
+        if (localState.faceVerify && localState.faceVerify.isPausedForFace) {
+          statusText.textContent = 'XÁC MINH KHUÔN MẶT';
+          statusDot.className = 'ps-dot ps-dot-warning';
+          btnStart.style.display = 'inline-flex';
+          btnStart.disabled = true;
+          btnPause.style.display = 'none';
+        } else if (localState.isPausedByViolation) {
+          statusText.textContent = 'BỊ TẠM DỪNG (VI PHẠM)';
+          statusDot.className = 'ps-dot ps-dot-danger';
+          btnStart.style.display = 'inline-flex';
+          btnStart.disabled = false; // Allow manual resume if user is ready
+          btnPause.style.display = 'none';
+        } else if (localState.isRunning) {
+          statusText.textContent = 'Đang hoạt động';
+          statusDot.className = 'ps-dot ps-dot-active';
+          btnStart.style.display = 'none';
+          btnPause.style.display = 'inline-flex';
+          btnStart.disabled = false;
+          btnPause.disabled = false;
+        } else {
+          statusText.textContent = displaySeconds > 0 ? 'Tạm dừng' : 'Chưa bắt đầu';
+          statusDot.className = 'ps-dot ps-dot-idle';
+          btnStart.style.display = 'inline-flex';
+          btnPause.style.display = 'none';
+          btnStart.disabled = false;
+          btnPause.disabled = false;
+        }
       }
     }
 
@@ -223,15 +246,55 @@
 
   sendMessage('GET_STATE');
 
+  // ---- Fullscreen Monitoring ----
+  function checkFullscreen() {
+    // Non-punitive fullscreen check: 
+    // We don't block the user or pause the timer anymore.
+    // background.js will handle forcing the window back to fullscreen.
+    if (!localState) return;
+    
+    const isTracking = localState.isRunning;
+    const isFS = !!document.fullscreenElement;
+
+    if (isTracking && !isFS) {
+      console.log('[PowerSight] Fullscreen exit detected. Aggressive enforcement will restore it.');
+      // No violation logging, no pausing.
+    }
+  }
+
+  document.addEventListener('fullscreenchange', checkFullscreen);
+
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    // Cancel any ongoing speech to avoid overlap
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'vi-VN';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    window.speechSynthesis.speak(utterance);
+  }
+
   if (isContextValid()) {
     try {
       chrome.runtime.onMessage.addListener((msg) => {
         if (!isContextValid()) { teardown(); return; }
         if (msg.type === 'STATE_UPDATE') {
           updateUI(msg.state);
+          // Also check FS status after state update to ensure UI matches
+          checkFullscreen();
         }
         if (msg.type === 'FACE_VERIFY_START') {
           showFaceVerificationModal();
+          const isMainTab = window.location.href.includes('localhost:3000');
+          if (isMainTab) {
+            speak('Hệ thống cần xác minh khuôn mặt. Vui lòng nhấn nút quét để bắt đầu.');
+          } else {
+            speak('Vui lòng quay về trang Dashboard để xác minh khuôn mặt.');
+          }
+        }
+        if (msg.type === 'SPEAK') {
+          speak(msg.text);
         }
       });
     } catch (e) {
@@ -273,7 +336,15 @@
     
     document.getElementById('ps-btn-sap').addEventListener('click', () => {
       appsMenu.classList.remove('ps-show');
-      sendMessage('SWITCH_TAB', { url: 'https://ucc.cit.tum.de', pattern: '*://ucc.cit.tum.de/*' });
+      sendMessage('SWITCH_TAB', { 
+        url: 'https://s36.gb.ucc.cit.tum.de/sap/bc/ui2/flp?sap-client=312&sap-language=EN#Shell-home', 
+        pattern: '*://s36.gb.ucc.cit.tum.de/*' 
+      });
+    });
+
+    document.getElementById('ps-btn-drive').addEventListener('click', () => {
+      appsMenu.classList.remove('ps-show');
+      sendMessage('SWITCH_TAB', { url: 'https://drive.google.com', pattern: '*://drive.google.com/*' });
     });
 
     btnToggle.addEventListener('click', () => {
@@ -301,19 +372,46 @@
   let faceModal = null;
   let faceStream = null;
 
-  function getStoredFaceDescriptor() {
-    try {
-      const raw = localStorage.getItem(FACE_STORAGE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch { return null; }
+  async function getStoredFaceDescriptor() {
+    return new Promise((resolve) => {
+      // 1. Try chrome.storage.local (synced from Supabase by background)
+      try {
+        if (chrome && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.get([FACE_STORAGE_KEY], (result) => {
+            if (result && result[FACE_STORAGE_KEY]) {
+              console.log('[PowerSight] Using face descriptor from chrome.storage (Supabase sync)');
+              resolve(result[FACE_STORAGE_KEY]);
+              return;
+            }
+            
+            // 2. Fallback to localStorage
+            const raw = localStorage.getItem(FACE_STORAGE_KEY);
+            if (raw) {
+              console.log('[PowerSight] Using face descriptor from localStorage');
+              resolve(JSON.parse(raw));
+            } else {
+              resolve(null);
+            }
+          });
+          return;
+        }
+      } catch (e) {
+        console.warn('[PowerSight] chrome.storage error, falling back to localStorage');
+      }
+
+      // Final fallback
+      try {
+        const raw = localStorage.getItem(FACE_STORAGE_KEY);
+        resolve(raw ? JSON.parse(raw) : null);
+      } catch { resolve(null); }
+    });
   }
 
-  function showFaceVerificationModal() {
+  async function showFaceVerificationModal() {
     // Don't show if already showing
     if (faceModal) return;
 
-    const storedFace = getStoredFaceDescriptor();
+    const storedFace = await getStoredFaceDescriptor();
     if (!storedFace) {
       console.warn('[PowerSight] No face registered, skipping verification');
       // Auto-pass if no face registered
@@ -334,7 +432,9 @@
               Hệ thống sẽ quét khuôn mặt của bạn để xác minh danh tính.<br>
               Vui lòng nhìn thẳng vào camera.
             </p>
-            <div id="psf-countdown" class="psf-countdown">${WARNING_SECONDS}</div>
+            <div class="psf-actions">
+              <button id="psf-btn-scan-trigger" class="psf-btn-primary">Bắt đầu quét</button>
+            </div>
             <p class="psf-paused">⏸ Timer đã tạm dừng</p>
           </div>
 
@@ -370,17 +470,23 @@
 
     document.documentElement.appendChild(faceModal);
 
-    // Start warning countdown
-    let countdown = WARNING_SECONDS;
-    const countdownEl = document.getElementById('psf-countdown');
-    const countdownInterval = setInterval(() => {
-      countdown -= 1;
-      if (countdownEl) countdownEl.textContent = countdown;
-      if (countdown <= 0) {
-        clearInterval(countdownInterval);
+    const scanBtn = document.getElementById('psf-btn-scan-trigger');
+    const isMainTab = window.location.href.includes('localhost:3000');
+
+    if (!isMainTab) {
+      scanBtn.textContent = 'Quay về Dashboard để quét';
+      scanBtn.classList.add('psf-btn-secondary');
+    }
+
+    scanBtn.addEventListener('click', () => {
+      if (!isMainTab) {
+        sendMessage('GO_HOME');
+        // Dismiss this modal since it will re-appear on the new tab
+        dismissFaceModal();
+      } else {
         startFaceScanning();
       }
-    }, 1000);
+    });
   }
 
   async function startFaceScanning() {
@@ -428,7 +534,7 @@
   async function captureAndCompare(videoEl) {
     if (!videoEl) return { match: false, distance: 999 };
     
-    const storedDescriptorArray = getStoredFaceDescriptor();
+    const storedDescriptorArray = await getStoredFaceDescriptor();
     if (!storedDescriptorArray) return { match: true, distance: 0 };
 
     // Capture current frame to canvas and extract pixel data for comparison
@@ -558,6 +664,7 @@
       if (scoreEl) {
         scoreEl.textContent = `Độ tương đồng: ${Math.max(0, Math.round((1 - result.distance) * 100))}%`;
       }
+      speak('Xác minh thành công. Cảm ơn bạn.');
       // Auto-dismiss after 2 seconds
       setTimeout(dismissFaceModal, 2000);
     } else {
@@ -566,6 +673,7 @@
       if (scoreEl && result.distance < 999) {
         scoreEl.textContent = `Độ tương đồng: ${Math.max(0, Math.round((1 - result.distance) * 100))}%`;
       }
+      speak('Xác minh thất bại. Vui lòng thử lại sau.');
       // Dismiss after 3 seconds (but timer stays paused)
       setTimeout(dismissFaceModal, 3000);
     }

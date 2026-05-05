@@ -504,3 +504,65 @@ input[type="time"].cal-input, input[type="date"].cal-input { color-scheme: dark;
   color: var(--cat-color);
   border-color: color-mix(in srgb, var(--cat-color) 40%, transparent);
 }
+/* Fullscreen Enforcement Overlay */
+.ps-enforcer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.98);
+  backdrop-filter: blur(12px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.ps-enforcer-card {
+  max-width: 500px;
+  padding: 48px;
+  background: #1e293b;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: modalSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ps-enforcer-icon {
+  font-size: 4rem;
+  margin-bottom: 24px;
+}
+
+.ps-enforcer-title {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--danger);
+  margin-bottom: 16px;
+}
+
+.ps-enforcer-desc {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+}
+
+.ps-enforcer-btn {
+  width: 100%;
+  padding: 18px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-radius: 16px;
+  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
+}
+
+.ps-enforcer-btn:hover {
+  transform: scale(1.02);
+  filter: brightness(1.1);
+}
+
+.ps-enforcer-btn:active {
+  transform: scale(0.98);
+}

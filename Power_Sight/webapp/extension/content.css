@@ -117,6 +117,11 @@
   transition: all 0.15s ease !important;
   line-height: 1 !important;
 }
+.ps-btn:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(0.6) !important;
+}
 
 .ps-btn-start {
   background: linear-gradient(135deg, #10b981, #059669) !important;
@@ -346,13 +351,30 @@
   font-size: 0.9rem !important;
 }
 
-.psf-countdown {
-  font-size: 3.5rem !important;
-  font-weight: 700 !important;
-  font-family: 'Courier New', monospace !important;
-  color: #f59e0b !important;
-  text-shadow: 0 0 20px rgba(245, 158, 11, 0.4) !important;
-  margin: 8px 0 !important;
+.psf-actions {
+  margin: 24px 0 !important;
+}
+
+.psf-btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  color: white !important;
+  border: none !important;
+  padding: 14px 28px !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  font-size: 15px !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important;
+}
+
+.psf-btn-primary:hover {
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
+  transform: translateY(-2px) !important;
+}
+
+.psf-btn-secondary {
+  background: linear-gradient(135deg, #64748b, #475569) !important;
 }
 
 .psf-paused {

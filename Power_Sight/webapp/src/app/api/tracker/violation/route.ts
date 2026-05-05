@@ -1,80 +1,54 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import * as xlsx from 'xlsx';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // POST /api/tracker/violation
-// Body: { employeeId, sessionId, details, similarity }
-// Appends a FACE_MISMATCH row to the Fraud_Events sheet of the current month's work_logs xlsx
+// Body: { employeeId, sessionId, eventType, details, severity, isFraud, module }
+// Inserts a violation record into Supabase fraud_events
 export async function POST(req: Request) {
   try {
+    const body = await req.json();
     const {
       employeeId = 'EM001',
       sessionId,
+      eventType = 'FACE_MISMATCH',
       details,
-      similarity,
-    } = await req.json();
+      severity = 'WARNING',
+      isFraud = true,
+      module = 'Face',
+      similarity, // Optional, for backward compatibility
+    } = body;
 
-    // Determine the current month folder
     const now = new Date();
-    const year = now.getFullYear();
-    const month = (now.getMonth() + 1).toString().padStart(2, '0');
-    const folderName = `${year}_${month}`;
-    const dateStr = `${year}-${month}-${now.getDate().toString().padStart(2, '0')}`;
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-    const timestamp = `${dateStr} ${timeStr}`;
 
-    const dataPath = path.join(process.cwd(), 'generated_data', employeeId, folderName);
-    const xlsxPath = path.join(dataPath, `work_logs_${employeeId}_${folderName}.xlsx`);
+    // --- Log to Supabase ---
+    const { error: dbError } = await supabase
+      .from('fraud_events')
+      .insert([{
+        emp_id: employeeId,
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        event_type: eventType,
+        severity: severity.toUpperCase(),
+        details: details || (eventType === 'FACE_MISMATCH' ? `Face verification failed - Similarity: ${similarity}` : ''),
+        is_fraud: isFraud ? 1 : 0,
+        module: module,
+        session_id: sessionId,
+        timestamp: now.toISOString()
+      }]);
 
-    if (!fs.existsSync(xlsxPath)) {
-      return NextResponse.json(
-        { error: `Không tìm thấy file work_logs tại: ${xlsxPath}` },
-        { status: 404 }
-      );
+    if (dbError) {
+      console.error('[ViolationAPI] Supabase Insert Error:', dbError);
+      return NextResponse.json({ error: 'Không thể ghi vi phạm vào database' }, { status: 500 });
     }
 
-    // Read the existing workbook
-    const workBuf = fs.readFileSync(xlsxPath);
-    const workbook = xlsx.read(workBuf, { type: 'buffer' });
+    console.log(`[ViolationAPI] Logged ${eventType} for ${employeeId} to Supabase`);
 
-    if (!workbook.SheetNames.includes('Fraud_Events')) {
-      return NextResponse.json(
-        { error: 'Sheet Fraud_Events không tồn tại trong file' },
-        { status: 500 }
-      );
-    }
-
-    // Build the new violation row
-    const simScore = similarity != null ? parseFloat(similarity) : 0;
-    const newRow = {
-      Timestamp: timestamp,
-      Event_Type: 'FACE_MISMATCH',
-      Details: details || `Face verification failed - Similarity: ${simScore.toFixed(3)}`,
-      User: employeeId,
-      Session_ID: sessionId || `SESS_LIVE_${year}${month}${now.getDate().toString().padStart(2, '0')}`,
-      Severity: 'WARNING',
-      IsFraud: 1,
-      Date: dateStr,
-      Time: timeStr,
-      Module: 'Face',
-    };
-
-    // Append to existing Fraud_Events sheet
-    const sheet = workbook.Sheets['Fraud_Events'];
-    const existingData = xlsx.utils.sheet_to_json(sheet);
-    const updatedData = [...existingData, newRow];
-
-    const newSheet = xlsx.utils.json_to_sheet(updatedData);
-    workbook.Sheets['Fraud_Events'] = newSheet;
-
-    // Write back to file
-    const outBuf = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-    fs.writeFileSync(xlsxPath, outBuf);
-
-    console.log(`[ViolationAPI] Logged FACE_MISMATCH for ${employeeId} at ${timestamp}`);
-
-    return NextResponse.json({ success: true, timestamp });
+    return NextResponse.json({ success: true, timestamp: now.toISOString() });
   } catch (error) {
     console.error('[ViolationAPI] Error:', error);
     return NextResponse.json({ error: 'Lỗi server khi ghi vi phạm' }, { status: 500 });

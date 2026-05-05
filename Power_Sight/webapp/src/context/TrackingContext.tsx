@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
-import { handleTrackerPause, handleTrackerResume } from '@/lib/tracking/violationEngine';
+import { handleTrackerPause, handleTrackerResume, logViolation } from '@/lib/tracking/violationEngine';
 import { useAuth } from '@/context/AuthContext';
 
 interface Session {
@@ -22,6 +22,9 @@ interface TrackerStats {
 interface TrackingContextType {
   isRunning: boolean;
   seconds: number;
+  isViolation: boolean;
+  isFullscreenViolation: boolean;
+  isFaceVerifying: boolean;
   pastSessions: Session[];
   trackerStats: TrackerStats;
   startTracking: () => void;
@@ -37,6 +40,10 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
   const { employeeId } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [isViolation, setIsViolation] = useState(false);
+  const [isFullscreenViolation, setIsFullscreenViolation] = useState(false);
+  const wasRunningBeforeViolation = useRef(false);
+  const [isFaceVerifying, setIsFaceVerifying] = useState(false);
   const [pastSessions, setPastSessions] = useState<Session[]>([]);
   const [trackerStats, setTrackerStats] = useState<TrackerStats>({
     completedTasks: 0,
@@ -102,6 +109,8 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     };
   }, [isRunning]);
 
+
+
   // Sync state from Chrome Extension Content Script
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -110,12 +119,14 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
         const currentlyRunning = event.data.state.isRunning;
         setIsRunning(currentlyRunning);
         setSeconds(event.data.state.seconds);
+        setIsViolation(event.data.state.isPausedByViolation || event.data.state.isUrlAllowed === false);
+        setIsFaceVerifying(!!(event.data.state.faceVerify && event.data.state.faceVerify.isPausedForFace));
         
         // Track violations based on state transitions
         if (currentlyRunning && !wasRunningRef.current) {
-          handleTrackerResume();
+          handleTrackerResume(employeeId);
         } else if (!currentlyRunning && wasRunningRef.current) {
-          handleTrackerPause();
+          handleTrackerPause(employeeId);
         }
         wasRunningRef.current = currentlyRunning;
       }
@@ -127,30 +138,50 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     window.postMessage({ type: 'POWERSIGHT_COMMAND', command: 'GET_STATE' }, '*');
     
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [employeeId]);
+
+  // Sync employeeId to extension
+  useEffect(() => {
+    if (employeeId) {
+      window.postMessage({ 
+        type: 'POWERSIGHT_COMMAND', 
+        command: 'SET_CONFIG', 
+        config: { employeeId } 
+      }, '*');
+    }
+  }, [employeeId]);
 
   const [startTime, setStartTime] = useState<string | null>(null);
 
   const startTracking = useCallback(() => {
+    if (isRunningRef.current) return;
+
+    // Force to fullscreen for Focus Mode
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+
     // Send command to extension if present
     window.postMessage({ type: 'POWERSIGHT_COMMAND', command: 'START' }, '*');
     // Also update local state immediately (fallback or instant UI feedback)
     setIsRunning(true);
     setStartTime(new Date().toISOString());
     if (!wasRunningRef.current) {
-      handleTrackerResume();
+      handleTrackerResume(employeeId);
     }
     wasRunningRef.current = true;
-  }, []);
+  }, [employeeId]);
 
   const pauseTracking = useCallback(() => {
+    if (!isRunningRef.current) return;
+
     window.postMessage({ type: 'POWERSIGHT_COMMAND', command: 'PAUSE' }, '*');
     setIsRunning(false);
     if (wasRunningRef.current) {
-      handleTrackerPause();
+      handleTrackerPause(employeeId);
     }
     wasRunningRef.current = false;
-  }, []);
+  }, [employeeId]);
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
@@ -210,8 +241,48 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     wasRunningRef.current = true;
   }, []);
 
+
+  // Global violation listeners (Browser behavior)
+  useEffect(() => {
+    // We need to keep listeners even if paused to detect return to fullscreen
+    const handleVisibilityChange = () => {
+      if (document.hidden && isRunningRef.current) {
+        logViolation('browser_tab_exit', 'critical', { reason: 'User left the webapp tab' }, employeeId, 'Web Client');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Fullscreen violation detection
+    const handleFullscreenChange = () => {
+      // Fullscreen is now handled by the extension. 
+      // We just ensure the violation state is always cleared.
+      setIsFullscreenViolation(false);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, [isRunning, employeeId, pauseTracking, startTracking, isFaceVerifying]);
+
   return (
-    <TrackingContext.Provider value={{ isRunning, seconds, pastSessions, trackerStats, startTracking, pauseTracking, stopTracking, pauseForVerification, resumeAfterVerification }}>
+    <TrackingContext.Provider value={{ 
+      isRunning, 
+      seconds, 
+      isViolation,
+      isFullscreenViolation,
+      isFaceVerifying,
+      pastSessions, 
+      trackerStats, 
+      startTracking, 
+      pauseTracking, 
+      stopTracking, 
+      pauseForVerification, 
+      resumeAfterVerification 
+    }}>
       {children}
     </TrackingContext.Provider>
   );

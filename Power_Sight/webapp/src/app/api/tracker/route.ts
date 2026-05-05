@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 
 async function getGeminiFeedback(employeeId: string, completedTasks: number, targetTasks: number, violationsCount: number) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
     const prompt = `Bạn là trợ lý hiệu suất PowerSight. Hãy đưa ra 1 nhận xét cực ngắn (tối đa 25 từ) về hiệu suất của nhân viên ${employeeId} dựa trên:
 - Đơn hoàn thành: ${completedTasks}/${targetTasks}
 - Số lỗi vi phạm: ${violationsCount} lỗi.

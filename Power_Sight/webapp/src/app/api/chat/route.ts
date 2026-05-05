@@ -91,37 +91,102 @@ async function computeMetrics(employeeId: string, year: number) {
   });
   const avgCycleTime = completedOrders > 0 ? totalCycleHours / completedOrders : 0;
 
+  // 9. Detailed Context for AI
+  const recentOrders = sapData
+    .filter(d => d.os === 'C' && d.ds === 'C')
+    .slice(-10)
+    .map(d => `Đơn ${d.sales_doc}: Lợi nhuận ${Number(d.net_value).toLocaleString()} VND, Ngày ${d.created_on}`)
+    .join('\n');
+
+  const recentViolations = fraudData
+    .slice(-5)
+    .map(d => `Vi phạm: ${d.event_type}, Mức độ: ${d.severity}, Ngày: ${d.timestamp}`)
+    .join('\n');
+
+  // Lọc đơn hàng chưa xử lý (unique by sales_doc)
+  const uniqueDocs = Array.from(new Set(sapData.map(d => d.sales_doc)));
+  const pendingOrders = uniqueDocs
+    .map(doc => {
+      const docRows = sapData.filter(d => d.sales_doc === doc);
+      const isPending = docRows.some(d => d.os !== 'C' || d.ds !== 'C');
+      if (isPending) {
+        const latest = docRows[docRows.length - 1];
+        return `Đơn ${doc}: Trạng thái ${latest.os}/${latest.ds}, Ngày tạo ${latest.created_on}`;
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(-10)
+    .join('\n');
+
   return {
     avgWorkTime, orderCompletionRate, avgProfit, avgModRate,
     violationFreq, kpiCompletionRate, kpiTarget, effectiveRatio,
-    avgCycleTime, totalOrders, completedOrders, totalProfit, totalFraud
+    avgCycleTime, totalOrders, completedOrders, totalProfit, totalFraud,
+    recentOrders, recentViolations, pendingOrders
   };
 }
 
-function buildSystemPrompt(employeeId: string, year: number, m: any): string {
-  return `Bạn là PowerSight Assistant, trợ lý hiệu suất chuyên nghiệp.
-Phân tích 8 CHỈ SỐ HIỆU SUẤT CỦA ${employeeId} (${year}):
+function detectIntent(message: string): 'suggestion' | 'support' | 'complaint' | 'general' {
+  const msg = message.toLowerCase();
+  if (msg.includes('đề xuất') || msg.includes('khóa học') || msg.includes('phát triển') || msg.includes('học')) return 'suggestion';
+  if (msg.includes('hỗ trợ') || msg.includes('mã đơn') || msg.includes('chi tiết') || msg.includes('thông tin') || msg.includes('chưa xử lý') || msg.includes('pending') || msg.includes('đơn hàng')) return 'support';
+  if (msg.includes('khiếu nại') || msg.includes('vi phạm') || msg.includes('tại sao') || msg.includes('lỗi')) return 'complaint';
+  return 'general';
+}
 
+function buildSystemPrompt(employeeId: string, year: number, m: any, intent: string): string {
+  const metricsSummary = `
+CHỈ SỐ HIỆU SUẤT CỦA ${employeeId} (${year}):
 - Thời gian làm việc TB: ${m.avgWorkTime.toFixed(2)} giờ/ngày
 - Tỷ lệ hoàn thành đơn: ${m.orderCompletionRate.toFixed(2)}%
 - Lợi nhuận ròng TB/đơn: ${m.avgProfit.toLocaleString()} VND
-- Sửa đổi TB/đơn: ${m.avgModRate.toFixed(2)} lần
 - Tần suất vi phạm: ${m.violationFreq.toFixed(4)} lần/giờ
 - Tỷ lệ hoàn thành KPI: ${m.kpiCompletionRate.toFixed(2)}% (Mục tiêu: ${m.kpiTarget} đơn)
-- Thời gian làm việc hiệu quả: ${m.effectiveRatio.toFixed(3)}
 - Chu kỳ đơn hàng: ${m.avgCycleTime.toFixed(2)} giờ
+`;
 
-Thông tin bổ sung:
-- Tổng đơn: ${m.totalOrders}
-- Đã hoàn thành: ${m.completedOrders}
-- Tổng lợi nhuận: ${m.totalProfit.toLocaleString()} VND
-- Tổng số vi phạm: ${m.totalFraud}
+  const basePrompt = `Bạn là PowerSight AI – trợ lý hỗ trợ nhân viên chuyên nghiệp.
+Nhân viên: ${employeeId}
+${metricsSummary}`;
 
-QUY TẮC PHẢN HỒI:
-- Trả lời tiếng Việt, lịch sự, chuyên nghiệp.
-- Sử dụng Markdown (in đậm, danh sách gạch đầu dòng) để trình bày trực quan, dễ đọc.
-- Phân tích dựa trên 8 chỉ số trên.
-- Soạn thảo email khi có yêu cầu dựa trên dữ liệu vi phạm/hiệu suất.`;
+  if (intent === 'suggestion') {
+    return `${basePrompt}
+Dựa trên dữ liệu hiệu suất ở trên, hãy đề xuất các khóa học hoặc hướng phát triển phù hợp để cải thiện các chỉ số còn thấp (ví dụ: chu kỳ đơn hàng, tỷ lệ sửa đổi).
+Trả lời ngắn gọn, thân thiện, không dùng ký tự đặc biệt.`;
+  }
+
+  if (intent === 'support') {
+    return `${basePrompt}
+DỮ LIỆU CHI TIẾT ĐỂ TRA CỨU:
+- sap_reality: Bảng dữ liệu đơn hàng SAP. Cột 'sales_doc' là Mã Đơn Hàng (ID). Cột 'os' (Order Status) và 'ds' (Delivery Status) dùng để xác định trạng thái. 'C' nghĩa là đã xong (Completed).
+- fraud_events (hoặc frau_alert): Bảng ghi nhận vi phạm.
+
+DANH SÁCH ĐƠN HÀNG GẦN ĐÂY:
+${m.recentOrders}
+
+DANH SÁCH ĐƠN HÀNG CHƯA XỬ LÝ (PENDING - Có os hoặc ds khác 'C'):
+${m.pendingOrders}
+
+YÊU CẦU:
+1. Khi nhân viên hỏi về đơn hàng chưa xử lý, hãy LIỆT KÊ CHÍNH XÁC CÁC MÃ ĐƠN (sales_doc) từ danh sách PENDING ở trên.
+2. Nêu rõ trạng thái os/ds của từng đơn để nhân viên biết cần làm gì.
+3. Nếu không có đơn nào trong danh sách PENDING, hãy báo cáo rằng tất cả đơn hàng đã được xử lý xong.
+Trình bày rõ ràng, chuyên nghiệp.`;
+  }
+
+  if (intent === 'complaint') {
+    return `${basePrompt}
+DỮ LIỆU VI PHẠM & ĐƠN HÀNG CHƯA HOÀN THÀNH:
+${m.recentViolations}
+${m.pendingOrders}
+
+Hãy giải thích minh bạch các vấn đề, dẫn chứng bằng mã đơn hoặc thời điểm cụ thể, không đổ lỗi.
+Hướng dẫn nhân viên cách hoàn thiện các đơn hàng đang thiếu hoặc cách giảm thiểu vi phạm trong tương lai.`;
+  }
+
+  return `${basePrompt}
+Hãy trả lời câu hỏi một cách thân thiện, chính xác dựa trên dữ liệu hiện có. Tập trung vào việc tạo động lực và hỗ trợ nhân viên đạt được KPI.`;
 }
 
 export async function POST(request: Request) {
@@ -169,8 +234,9 @@ export async function POST(request: Request) {
     }));
 
     // 4. Tính toán metrics và tạo System Prompt
+    const intent = detectIntent(message);
     const metrics = await computeMetrics(employeeId, year);
-    const systemPrompt = buildSystemPrompt(employeeId, year, metrics);
+    const systemPrompt = buildSystemPrompt(employeeId, year, metrics, intent);
 
     // 5. Sử dụng startChat với history
     const model = genAI.getGenerativeModel({
