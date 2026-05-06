@@ -64,7 +64,7 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
   // ── Load face-api models ──────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const timer = setTimeout(async () => {
       try {
         const { loadFaceApi } = await import('@/lib/tracking/faceUtils');
         await loadFaceApi();
@@ -72,8 +72,8 @@ export function FaceVerificationProvider({ children }: { children: ReactNode }) 
       } catch (err) {
         console.error('[FaceVerification] Failed to load models:', err);
       }
-    })();
-    return () => { cancelled = true; };
+    }, 1000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   // ── Clear scheduler ───────────────────────────────────────────────────────

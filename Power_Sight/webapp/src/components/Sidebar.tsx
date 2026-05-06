@@ -63,11 +63,6 @@ export default function Sidebar() {
               <Link
                 href={`/viewer/${app.id}`}
                 className={`nav-item${isActive ? ' active' : ''}`}
-                onClick={() => {
-                  if (document.documentElement.requestFullscreen) {
-                    document.documentElement.requestFullscreen().catch(() => {});
-                  }
-                }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <app.icon size={18} />

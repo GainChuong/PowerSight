@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { ArrowLeft, ExternalLink, Globe, Shield, Clock, Play, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useTracking } from '@/context/TrackingContext';
+import { useAuth } from '@/context/AuthContext';
 import { useState, useEffect, useRef } from 'react';
 
 export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: string; description: string; embeddable: boolean }> = {
@@ -49,7 +50,9 @@ export default function ViewerPage() {
   const appId = params.id as string;
   const app = ALLOWED_APPS[appId];
   const { isRunning, seconds, startTracking } = useTracking();
+  const { userEmail } = useAuth();
   const [opened, setOpened] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
   const [sessionStart, setSessionStart] = useState<Date | null>(null);
   const openedRef = useRef(false);
 
@@ -65,11 +68,14 @@ export default function ViewerPage() {
       startTracking();
     }
 
-    // Force to fullscreen for focused work
-    if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen().catch(err => {
-        console.warn(`[Viewer] Fullscreen request failed: ${err.message}`);
-      });
+    if (app.id === 'gmail' && userEmail && !emailSent) {
+      // Trigger email send for the scenario
+      fetch('/api/tour/send-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail }),
+      }).catch(err => console.error('Failed to send auto-report', err));
+      setEmailSent(true);
     }
 
     setSessionStart(new Date());
@@ -127,9 +133,6 @@ export default function ViewerPage() {
               <button 
                 onClick={() => {
                   startTracking();
-                  if (document.documentElement.requestFullscreen) {
-                    document.documentElement.requestFullscreen().catch(() => {});
-                  }
                 }} 
                 className="btn-primary" 
                 style={{ padding: '6px 16px', fontSize: '0.85rem', background: 'linear-gradient(135deg, var(--success), #059669)' }}

@@ -127,8 +127,14 @@ async function computeMetrics(employeeId: string, year: number) {
   };
 }
 
-function detectIntent(message: string): 'suggestion' | 'support' | 'complaint' | 'general' {
+function detectIntent(message: string): 'suggestion' | 'support' | 'complaint' | 'general' | 'scenario_1' | 'scenario_2' | 'scenario_3' {
   const msg = message.toLowerCase();
+  
+  // Scenario specifics
+  if (msg.includes('đánh giá hiệu suất') && msg.includes('đầu năm')) return 'scenario_1';
+  if (msg.includes('vi phạm bao nhiêu lần') || msg.includes('hôm nay và những lỗi gì')) return 'scenario_2';
+  if (msg.includes('tối ưu và giảm sai sót') || msg.includes('xử lý báo cáo')) return 'scenario_3';
+
   if (msg.includes('đề xuất') || msg.includes('khóa học') || msg.includes('phát triển') || msg.includes('học')) return 'suggestion';
   if (msg.includes('hỗ trợ') || msg.includes('mã đơn') || msg.includes('chi tiết') || msg.includes('thông tin') || msg.includes('chưa xử lý') || msg.includes('pending') || msg.includes('đơn hàng')) return 'support';
   if (msg.includes('khiếu nại') || msg.includes('vi phạm') || msg.includes('tại sao') || msg.includes('lỗi')) return 'complaint';
@@ -183,6 +189,31 @@ ${m.pendingOrders}
 
 Hãy giải thích minh bạch các vấn đề, dẫn chứng bằng mã đơn hoặc thời điểm cụ thể, không đổ lỗi.
 Hướng dẫn nhân viên cách hoàn thiện các đơn hàng đang thiếu hoặc cách giảm thiểu vi phạm trong tương lai.`;
+  }
+
+  if (intent === 'scenario_1') {
+    return `${basePrompt}
+NHIỆM VỤ CỦA BẠN: Phân tích cụ thể các chỉ số hiệu suất từ đầu năm dựa vào dữ liệu trên. 
+Nhấn mạnh vào Tỷ lệ hoàn thành đơn, Lợi nhuận và Thời gian làm việc. 
+Đưa ra nhận xét khách quan (có khen ngợi nếu tốt, có cảnh báo nếu kém).`;
+  }
+
+  if (intent === 'scenario_2') {
+    return `${basePrompt}
+DỮ LIỆU VI PHẠM GẦN ĐÂY:
+${m.recentViolations}
+
+NHIỆM VỤ CỦA BẠN: Dựa vào lịch sử vi phạm, báo cáo tình hình vi phạm trong ngày.
+LƯU Ý QUAN TRỌNG: Giải thích cho nhân viên hiểu rằng theo quy định của hệ thống PowerSight, việc mở bất kỳ tab hay ứng dụng nào KHÔNG thuộc danh sách cho phép (Gmail và Google Drive/Sheets) đều bị tính là vi phạm Tracker. Nếu họ đã copy lệnh Chatbot ra một tab ngoài để search, đó chính là nguyên nhân gây lỗi vi phạm.`;
+  }
+
+  if (intent === 'scenario_3') {
+    return `${basePrompt}
+NHIỆM VỤ CỦA BẠN: Đưa ra lời khuyên để tối ưu hóa quy trình xử lý báo cáo tài chính.
+LƯU Ý QUAN TRỌNG: Hãy cung cấp và khuyến nghị người dùng đối chiếu công việc với "Sheet Kết Quả Chuẩn" sau đây:
+Link Sheet Processed: https://docs.google.com/spreadsheets/d/12ZSvldy-OpiALVzpMY_rlNYJbLE1hl8LIa2tTNHUmMc/edit?usp=sharing
+
+Giải thích tại sao làm theo định dạng chuẩn này (tính tổng hàm SUM chính xác, dùng Conditional Formatting để cảnh báo số liệu bất thường, in đậm Header) lại giúp giảm sai sót.`;
   }
 
   return `${basePrompt}

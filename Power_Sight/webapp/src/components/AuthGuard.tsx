@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import Login from './Login';
+import GuidedTour from './GuidedTour';
 import { useEffect, useState } from 'react';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -21,5 +22,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     return <Login />;
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <GuidedTour />
+    </>
+  );
 }

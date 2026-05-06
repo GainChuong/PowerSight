@@ -7,7 +7,8 @@ const AUTH_VERSION = '4'; // Tăng số này để xóa session cũ và force re
 interface AuthContextType {
   isAuthenticated: boolean;
   employeeId: string | null;
-  login: (employeeId: string) => void;
+  userEmail: string | null;
+  login: (employeeId: string, email: string) => void;
   logout: () => void;
 }
 
@@ -16,6 +17,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -27,10 +29,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem('power_sight_auth');
           return;
         }
-        const { id } = parsed;
+        const { id, email } = parsed;
         if (id && typeof id === 'string' && id.trim().length > 0) {
           setIsAuthenticated(true);
           setEmployeeId(id);
+          if (email) setUserEmail(email);
         } else {
           localStorage.removeItem('power_sight_auth');
         }
@@ -40,20 +43,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = (id: string) => {
+  const login = (id: string, email: string) => {
     setIsAuthenticated(true);
     setEmployeeId(id);
-    localStorage.setItem('power_sight_auth', JSON.stringify({ id, version: AUTH_VERSION }));
+    setUserEmail(email);
+    localStorage.setItem('power_sight_auth', JSON.stringify({ id, email, version: AUTH_VERSION }));
   };
 
   const logout = () => {
     setIsAuthenticated(false);
     setEmployeeId(null);
+    setUserEmail(null);
     localStorage.removeItem('power_sight_auth');
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, employeeId, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, employeeId, userEmail, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

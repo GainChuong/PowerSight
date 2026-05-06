@@ -39,7 +39,30 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ tasks: tasks || [] });
+  let tasksList = tasks || [];
+
+  // MOCK: Add scenario task for today
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (date === todayStr || (month && year && todayStr.startsWith(`${year}-${month.padStart(2, '0')}`))) {
+    const hasScenarioTask = tasksList.some((t: any) => t.title && t.title.includes('Xử lý sheet báo cáo'));
+    if (!hasScenarioTask) {
+      tasksList.unshift({
+        id: 'mock-scenario-task',
+        emp_id: empId,
+        task_date: todayStr,
+        title: 'Xử lý sheet báo cáo kết quả hoạt động kinh doanh từ phòng Tài chính',
+        description: 'Vui lòng mở email để nhận file báo cáo thô, xử lý và gửi lại kết quả.',
+        category: 'project',
+        priority: 'high',
+        status: 'pending',
+        assigned_by: 'MNG001',
+        sort_order: -1,
+        created_at: new Date().toISOString()
+      });
+    }
+  }
+
+  return NextResponse.json({ tasks: tasksList });
 }
 
 export async function POST(request: NextRequest) {

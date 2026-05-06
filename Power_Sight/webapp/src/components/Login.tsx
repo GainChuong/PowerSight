@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound } from 'lucide-react';
+import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound, Mail } from 'lucide-react';
 import { useFaceVerification } from '@/context/FaceVerificationContext';
 
 export default function Login() {
@@ -10,6 +10,7 @@ export default function Login() {
   const { setFaceDescriptor } = useFaceVerification();
   const [empId, setEmpId] = useState('');
   const [password, setPassword] = useState('password123'); // Default for demo
+  const [email, setEmail] = useState('');
 
   // Face registration state
   const [faceRegistered, setFaceRegistered]     = useState(false);
@@ -23,7 +24,8 @@ export default function Login() {
 
   // ── Khởi tạo mô hình AI ──────────────────────────────────────────────────
   useEffect(() => {
-    async function load() {
+    // Delay loading to allow the UI to paint first
+    const timer = setTimeout(async () => {
       try {
         const { loadFaceApi } = await import('@/lib/tracking/faceUtils');
         await loadFaceApi();
@@ -32,15 +34,15 @@ export default function Login() {
         console.error('[Login] Model load error:', err);
         setError('Không thể tải mô hình nhận diện khuôn mặt.');
       }
-    }
-    load();
+    }, 500);
+    return () => clearTimeout(timer);
   }, []);
 
   // ── Kiểm tra ID nhân viên ──────────────────────────────────────────────
   const handleCheckId = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empId.trim()) {
-      setError('Vui lòng nhập mã nhân viên');
+    if (!empId.trim() || !email.trim()) {
+      setError('Vui lòng nhập mã nhân viên và email');
       return;
     }
     setError('');
@@ -179,7 +181,7 @@ export default function Login() {
         return;
       }
       try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
-      login(empId);
+      login(empId, email);
     } catch {
       setError('Lỗi kết nối. Vui lòng thử lại sau.');
     } finally {
@@ -245,6 +247,23 @@ export default function Login() {
                 onChange={e => setEmpId(e.target.value.toUpperCase())}
                 required
                 autoFocus
+                style={{
+                  width: '100%', padding: '14px 14px 14px 44px',
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '12px', color: '#fff', fontSize: '1rem', outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div style={{ position: 'relative' }}>
+              <Mail size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="email"
+                placeholder="Email để nhận báo cáo (VD: name@gmail.com)"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
                 style={{
                   width: '100%', padding: '14px 14px 14px 44px',
                   background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
@@ -403,6 +422,26 @@ export default function Login() {
                   <input
                     type="text"
                     value={empId}
+                    readOnly
+                    style={{
+                      width: '100%', padding: '12px 12px 12px 40px',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '10px', color: 'rgba(255,255,255,0.8)', outline: 'none',
+                      boxSizing: 'border-box', cursor: 'default',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
+                  Email
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <Mail size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input
+                    type="email"
+                    value={email}
                     readOnly
                     style={{
                       width: '100%', padding: '12px 12px 12px 40px',
