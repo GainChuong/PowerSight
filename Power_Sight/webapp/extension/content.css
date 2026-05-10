@@ -296,14 +296,20 @@
 }
 
 .psf-card {
-  background: rgba(30, 41, 59, 0.95) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  border-radius: 24px !important;
-  padding: 40px !important;
-  max-width: 480px !important;
-  width: 90% !important;
+  background: rgba(15, 23, 42, 0.98) !important;
+  border: 2px solid rgba(59, 130, 246, 0.3) !important;
+  border-radius: 32px !important;
+  padding: 60px 40px !important;
+  max-width: 600px !important;
+  width: 95% !important;
   text-align: center !important;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.8), 0 0 40px rgba(59, 130, 246, 0.1) !important;
+  animation: psf-popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+}
+
+@keyframes psf-popIn {
+  from { transform: scale(0.8) translateY(20px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
 }
 
 .psf-icon {
@@ -398,10 +404,12 @@
 
 .psf-video-container video {
   width: 100% !important;
-  max-width: 320px !important;
-  border-radius: 16px !important;
-  border: 2px solid #3b82f6 !important;
-  box-shadow: 0 0 30px rgba(59, 130, 246, 0.3) !important;
+  max-width: 520px !important;
+  aspect-ratio: 16 / 9 !important;
+  object-fit: cover !important;
+  border-radius: 20px !important;
+  border: 3px solid #3b82f6 !important;
+  box-shadow: 0 0 50px rgba(59, 130, 246, 0.4) !important;
 }
 
 .psf-video-overlay {

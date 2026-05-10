@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Play, Pause, Square, Sparkles, Clock, List, AlertTriangle } from 'lucide-react';
+import { Play, Pause, Square, MessageSquare, Clock, List, AlertTriangle } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { checkFacePolicy } from '@/lib/tracking/violationEngine';
 import { useTracking } from '@/context/TrackingContext';
@@ -39,7 +39,7 @@ export default function TimeTracker() {
   const hoursWorked = (totalSeconds / 3600).toFixed(1);
   const timeProgress = (totalSeconds / GOAL_SECONDS) * 100;
   
-  const getAiFeedback = () => {
+  const getPerformanceFeedback = () => {
     if (trackerStats.violationsCount > 0) {
       return {
         text: trackerStats.aiFeedback,
@@ -52,7 +52,7 @@ export default function TimeTracker() {
     };
   };
 
-  const aiFeedback = getAiFeedback();
+  const performanceFeedback = getPerformanceFeedback();
 
   return (
     <div className="animate-fade-in">
@@ -100,8 +100,8 @@ export default function TimeTracker() {
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', borderLeft: '3px solid var(--accent-primary)' }}>
                      <div style={{ color: 'var(--text-main)' }}>{session.start} - {session.end}</div>
                      <div style={{ display: 'flex', gap: '20px', color: 'var(--text-muted)' }}>
-                        <span>Tổng giờ: <strong>{session.duration}</strong></span>
-                        <span>Đã làm: <strong>{session.tasks} đơn</strong></span>
+                         <span>Tổng giờ: <strong>{session.duration}</strong></span>
+                         <span>Đã xử lý: <strong>{session.tasks} báo cáo</strong></span>
                      </div>
                   </div>
                 ))}
@@ -114,13 +114,13 @@ export default function TimeTracker() {
         {/* Khung AI Nhận xét & Mini Dashboard Dọc */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          <div className="glass-card" style={{ padding: '30px', border: `1px solid ${aiFeedback.color}`, boxShadow: `0 0 30px ${aiFeedback.glow}` }}>
+          <div className="glass-card" style={{ padding: '30px', border: `1px solid ${performanceFeedback.color}`, boxShadow: `0 0 30px ${performanceFeedback.glow}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-               <Sparkles color={aiFeedback.color} size={24} />
-               <h3 style={{ color: aiFeedback.color, margin: 0 }}>AI Đánh giá Nhanh</h3>
+               <MessageSquare color={performanceFeedback.color} size={24} />
+               <h3 style={{ color: performanceFeedback.color, margin: 0 }}>Nhận xét Hiệu suất</h3>
             </div>
             <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '20px', fontSize: '1.05rem', lineHeight: '1.6' }}>
-               {aiFeedback.text}
+               {performanceFeedback.text}
             </div>
           </div>
 

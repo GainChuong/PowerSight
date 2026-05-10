@@ -12,6 +12,11 @@ export async function POST(request: NextRequest) {
     // Google Sheets link (Raw, but force copy)
     const rawSheetCopyLink = "https://docs.google.com/spreadsheets/d/1j6zm5iILvlt09rwW0jR5fRJ79s-L2BA0_Bl25MulJ74/copy";
 
+    if (!process.env.EMAIL_USER || process.env.EMAIL_USER.includes('your-email')) {
+      console.warn('⚠️ SMTP credentials not configured in .env.local');
+      return NextResponse.json({ error: 'Mail system not configured' }, { status: 500 });
+    }
+
     // Standard Nodemailer transporter using env vars
     const transporter = nodemailer.createTransport({
       service: 'gmail',

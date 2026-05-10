@@ -1,29 +1,26 @@
 import { NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
-
-async function getGeminiFeedback(employeeId: string, completedTasks: number, targetTasks: number, violationsCount: number) {
-  try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
-    const prompt = `Bạn là trợ lý hiệu suất PowerSight. Hãy đưa ra 1 nhận xét cực ngắn (tối đa 25 từ) về hiệu suất của nhân viên ${employeeId} dựa trên:
-- Đơn hoàn thành: ${completedTasks}/${targetTasks}
-- Số lỗi vi phạm: ${violationsCount} lỗi.
-Phong cách: Chuyên nghiệp, trực diện. Nếu có lỗi vi phạm (>0), hãy cảnh báo. Nếu tiến độ tốt, hãy khen ngợi. Trả lời bằng tiếng Việt.`;
-    
-    const result = await model.generateContent(prompt);
-    return result.response.text();
-  } catch (err) {
-    console.error('Gemini feedback error:', err);
-    return "Không thể tải nhận xét từ AI lúc này.";
+function getQuickComment(completedTasks: number, targetTasks: number, violationsCount: number) {
+  if (violationsCount > 5) {
+    return "Cảnh báo: Số lượng vi phạm quá cao. Vui lòng tuân thủ quy định làm việc để tránh ảnh hưởng đến đánh giá.";
   }
+  if (violationsCount > 0) {
+    return "Lưu ý: Bạn có một số lỗi vi phạm tracker. Hãy tập trung vào công việc và hạn chế rời khỏi ứng dụng.";
+  }
+  if (completedTasks >= targetTasks) {
+    return "Tuyệt vời! Bạn đã hoàn thành mục tiêu báo cáo trong ngày. Hãy tiếp tục duy trì phong độ này.";
+  }
+  if (completedTasks > targetTasks * 0.5) {
+    return "Tiến độ tốt. Bạn đã hoàn thành hơn một nửa mục tiêu. Hãy cố gắng hoàn thành phần còn lại nhé.";
+  }
+  return "Đang trong quá trình ghi nhận hiệu suất. Hãy tập trung xử lý các báo cáo được giao.";
 }
 
 export async function GET(req: Request) {
@@ -35,13 +32,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing employeeId' }, { status: 400 });
     }
 
-    // 1. Fetch recent sessions from Supabase
+    // 1. Fetch today's sessions from Supabase
+    const today = new Date().toISOString().split('T')[0];
     const { data: sessionData, error: sessionError } = await supabase
       .from('browser_sessions')
       .select('*')
       .eq('emp_id', employeeId)
-      .order('session_start', { ascending: false })
-      .limit(10);
+      .gte('session_start', `${today}T00:00:00Z`)
+      .lte('session_start', `${today}T23:59:59Z`)
+      .order('session_start', { ascending: false });
 
     if (sessionError) throw sessionError;
 
@@ -70,16 +69,14 @@ export async function GET(req: Request) {
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
 
-    // 2. Fetch KPI/Target from Supabase
-    // Completed tasks: SAP records for current month where OS='C' and DS='C'
+    // Completed tasks: Business Report records for TODAY where status='completed'
     const { count: completedTasks, error: kpiError } = await supabase
-      .from('sap_reality')
+      .from('business_reports')
       .select('*', { count: 'exact', head: true })
       .eq('emp_id', employeeId)
-      .eq('year', currentYear)
-      .eq('month', currentMonth)
-      .eq('os', 'C')
-      .eq('ds', 'C');
+      .gte('created_at', `${today}T00:00:00Z`)
+      .lte('created_at', `${today}T23:59:59Z`)
+      .eq('status', 'completed');
 
     if (kpiError) throw kpiError;
 
@@ -96,18 +93,18 @@ export async function GET(req: Request) {
     const targetTasks = targetData?.kpi_value || 20;
     const kpiPerformance = targetTasks > 0 ? ((completedTasks || 0) / targetTasks) * 100 : 0;
 
-    // 3. Fetch current violations count for current month
+    // 3. Fetch current violations count for TODAY
     const { count: violationsCount, error: fraudError } = await supabase
       .from('fraud_events')
       .select('*', { count: 'exact', head: true })
       .eq('emp_id', employeeId)
-      .eq('year', currentYear)
-      .eq('month', currentMonth);
+      .gte('timestamp', `${today}T00:00:00Z`)
+      .lte('timestamp', `${today}T23:59:59Z`);
 
     if (fraudError) throw fraudError;
 
-    // 4. Get dynamic AI feedback from Gemini
-    const aiFeedbackText = await getGeminiFeedback(employeeId, completedTasks || 0, targetTasks, violationsCount || 0);
+    // 4. Get performance comment based on rules
+    const performanceFeedback = getQuickComment(completedTasks || 0, targetTasks, violationsCount || 0);
 
     return NextResponse.json({ 
       sessions: sessions,
@@ -115,7 +112,7 @@ export async function GET(req: Request) {
       targetTasks,
       violationsCount: violationsCount || 0,
       kpiPerformance: parseFloat(kpiPerformance.toFixed(1)),
-      aiFeedback: aiFeedbackText
+      aiFeedback: performanceFeedback
     });
 
   } catch (error) {
@@ -169,5 +166,55 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Tracker POST Error:', error);
     return NextResponse.json({ error: 'Lỗi server khi lưu session' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const employeeId = searchParams.get('employeeId');
+    if (!employeeId) return NextResponse.json({ error: 'Missing employeeId' }, { status: 400 });
+
+    // Use exact same logic as GET to identify "today"
+    const today = new Date().toISOString().split('T')[0];
+    const todayStart = `${today}T00:00:00Z`;
+    const todayEnd = `${today}T23:59:59Z`;
+
+    console.log(`[Tracker API] 🔄 Resetting ALL today data for ${employeeId} (UTC Range: ${todayStart} - ${todayEnd})`);
+
+    // 1. Delete today's sessions
+    const { error: sessionError } = await supabase
+      .from('browser_sessions')
+      .delete()
+      .eq('emp_id', employeeId)
+      .gte('session_start', todayStart)
+      .lte('session_start', todayEnd);
+
+    if (sessionError) throw sessionError;
+
+    // 2. Delete today's violations
+    const { error: fraudError } = await supabase
+      .from('fraud_events')
+      .delete()
+      .eq('emp_id', employeeId)
+      .gte('timestamp', todayStart)
+      .lte('timestamp', todayEnd);
+
+    if (fraudError) throw fraudError;
+
+    // 3. Delete today's completed reports (Business Reports)
+    const { error: reportError } = await supabase
+      .from('business_reports')
+      .delete()
+      .eq('emp_id', employeeId)
+      .gte('created_at', todayStart)
+      .lte('created_at', todayEnd);
+
+    if (reportError) throw reportError;
+
+    return NextResponse.json({ success: true, message: 'Today data fully reset' });
+  } catch (error) {
+    console.error('Tracker DELETE Error:', error);
+    return NextResponse.json({ error: 'Lỗi server khi reset dữ liệu' }, { status: 500 });
   }
 }

@@ -4,90 +4,84 @@ import React, { useEffect, useState } from 'react';
 import { useTour } from '@/context/TourContext';
 import { usePathname } from 'next/navigation';
 import { useTracking } from '@/context/TrackingContext';
-import { CheckCircle2, ChevronRight, X, Clock } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { CheckCircle2, ChevronRight, X, Clock, RotateCcw } from 'lucide-react';
 
-const TOUR_STEPS = [
-  {
-    id: 1,
-    title: 'Bước 1: Kiểm tra Lịch trình',
-    description: 'Truy cập tab Lịch làm việc (Calendar). Hãy tìm nhiệm vụ "Xử lý sheet báo cáo kết quả hoạt động kinh doanh từ phòng Tài chính" của ngày hôm nay.',
-    eta: '30s',
-    timeSeconds: 30
-  },
-  {
-    id: 2,
-    title: 'Bước 2: Bắt đầu làm việc',
-    description: 'Quay lại tab Time Tracker. Nhấn nút Bắt đầu để hệ thống bật Tracking và chuyển sang màn hình Fullscreen.',
-    eta: '10s',
-    timeSeconds: 10
-  },
-  {
-    id: 3,
-    title: 'Bước 3: Xử lý Báo cáo',
-    description: 'Mở ứng dụng Gmail. Một email chứa bản sao Google Sheet Raw đã được tự động gửi tới email của bạn. Mở file, xem gợi ý từ Chatbot (copy/paste từ tab ngoài sẽ bị ghi nhận vi phạm), và gửi mail lại sau khi hoàn thành.',
-    eta: '6 phút 50s',
-    timeSeconds: 410
-  },
-  {
-    id: 4,
-    title: 'Bước 4: Xem Dashboard',
-    description: 'Chuyển về Dashboard KPI. Hãy filter thời gian từ Tháng 1 đến Tháng hiện tại và quan sát biểu đồ.',
-    eta: '1 phút',
-    timeSeconds: 60
-  },
-  {
-    id: 5,
-    title: 'Bước 5: Chatbot AI',
-    description: 'Chuyển sang tab Chatbot và hỏi 3 câu:\n1. Đánh giá hiệu suất từ đầu năm?\n2. Vi phạm ngày hôm nay?\n3. Cách tối ưu xử lý báo cáo?',
-    eta: '1 phút',
-    timeSeconds: 60
-  }
-];
+import { TOUR_STEPS } from '@/constants/tourSteps';
 
 export default function GuidedTour() {
-  const { isActive, currentStep, nextStep, endTour } = useTour();
+  const { isActive, isMinimized, currentStep, timeLeft, nextStep, endTour, toggleMinimized } = useTour();
+  const { isAuthenticated } = useAuth();
   const pathname = usePathname();
   const { isRunning } = useTracking();
-  const [timeLeft, setTimeLeft] = useState(0);
 
   useEffect(() => {
     if (!isActive) return;
-
-    // Reset timer when step changes
-    const stepInfo = TOUR_STEPS.find(s => s.id === currentStep);
-    if (stepInfo) {
-      setTimeLeft(stepInfo.timeSeconds);
-    }
 
     // Auto advance logic based on user actions for step 2
     if (currentStep === 2 && isRunning) {
       setTimeout(() => nextStep(3), 1500);
     }
-  }, [currentStep, pathname, isRunning, isActive, nextStep]);
+  }, [currentStep, isRunning, isActive, nextStep]);
 
-  // Countdown timer logic
-  useEffect(() => {
-    if (!isActive || timeLeft <= 0) return;
-    
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          // Optional: Auto-advance when time is up, but we will just let it stay at 0
-          // nextStep(); 
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+  if (!isAuthenticated || !isActive) return null;
 
-    return () => clearInterval(timer);
-  }, [isActive, timeLeft, currentStep]);
-
-  if (!isActive) return null;
+  // ── Render Bubble Mode ───────────────────────────────────────────────────
+  if (isMinimized) {
+    return (
+      <button
+        onClick={() => toggleMinimized(false)}
+        style={{
+          position: 'fixed',
+          bottom: '30px',
+          right: '30px',
+          width: '60px',
+          height: '60px',
+          borderRadius: '50%',
+          background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+          border: 'none',
+          boxShadow: '0 8px 25px rgba(59, 130, 246, 0.5)',
+          cursor: 'pointer',
+          zIndex: 99999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          animation: 'fvPulseTour 2s infinite',
+          color: 'white',
+        }}
+      >
+        <Clock size={28} />
+        <div style={{
+          position: 'absolute',
+          top: '-5px',
+          right: '-5px',
+          width: '24px',
+          height: '24px',
+          background: '#ef4444',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '0.75rem',
+          fontWeight: 'bold',
+          border: '2px solid rgba(15, 23, 42, 1)',
+        }}>
+          {currentStep}
+        </div>
+        <style>{`
+          @keyframes fvPulseTour {
+            0%, 100% { transform: scale(1); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.5); }
+            50%       { transform: scale(1.05); box-shadow: 0 12px 35px rgba(59, 130, 246, 0.7); }
+          }
+        `}</style>
+      </button>
+    );
+  }
 
   const stepInfo = TOUR_STEPS.find(s => s.id === currentStep);
   if (!stepInfo) return null;
 
+  // ── Render Expanded Mode ──────────────────────────────────────────────────
   return (
     <div style={{
       position: 'fixed',
@@ -108,9 +102,15 @@ export default function GuidedTour() {
         <h3 style={{ margin: 0, fontSize: '1rem', color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '8px' }}>
           Trải nghiệm tính năng
         </h3>
-        <button onClick={endTour} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
-          <X size={18} />
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+           <button 
+             onClick={() => toggleMinimized(true)} 
+             style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
+             title="Thu nhỏ"
+           >
+             <X size={18} />
+           </button>
+        </div>
       </div>
 
       <h4 style={{ margin: '0 0 10px 0', fontSize: '1.1rem' }}>{stepInfo.title}</h4>
@@ -172,14 +172,14 @@ export default function GuidedTour() {
             </button>
           ) : (
             <button 
-              onClick={endTour}
+              onClick={() => nextStep(1)}
               style={{
-                background: '#10b981', color: 'white', border: 'none', padding: '6px 14px',
+                background: '#3b82f6', color: 'white', border: 'none', padding: '6px 14px',
                 borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
                 fontSize: '0.85rem', fontWeight: 'bold'
               }}
             >
-              Hoàn thành <CheckCircle2 size={14} />
+              Bắt đầu lại <RotateCcw size={14} />
             </button>
           )}
         </div>
@@ -191,6 +191,19 @@ export default function GuidedTour() {
           to { transform: translateY(0); opacity: 1; }
         }
       `}</style>
+    </div>
+  );
+}
+
+function ConsentItem({ icon, text }: { icon: string; text: string }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '12px',
+      padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)',
+      border: '1px solid rgba(255,255,255,0.05)'
+    }}>
+      <span style={{ fontSize: '1.2rem' }}>{icon}</span>
+      <span style={{ fontSize: '0.85rem', color: '#cbd5e1' }}>{text}</span>
     </div>
   );
 }

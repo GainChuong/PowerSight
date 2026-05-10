@@ -2,19 +2,19 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound, Mail } from 'lucide-react';
+import { ScanFace, UserCircle, LogIn, ShieldCheck, Camera, CheckCircle, AlertCircle, Loader, KeyRound, Mail, ArrowLeft } from 'lucide-react';
 import { useFaceVerification } from '@/context/FaceVerificationContext';
 
 export default function Login() {
   const { login } = useAuth();
-  const { setFaceDescriptor } = useFaceVerification();
+  const { setFaceDescriptor, faceDescriptor } = useFaceVerification();
   const [empId, setEmpId] = useState('');
-  const [password, setPassword] = useState('password123'); // Default for demo
   const [email, setEmail] = useState('');
 
   // Face registration state
   const [faceRegistered, setFaceRegistered]     = useState(false);
-  const [phase, setPhase]                        = useState<'enter_id' | 'checking' | 'register' | 'capturing' | 'processing' | 'done'>('enter_id');
+  const [phase, setPhase]                        = useState<'enter_id' | 'checking' | 'register' | 'capturing' | 'processing' | 'face_login' | 'password_login' | 'verifying' | 'done'>('enter_id');
+  const [password, setPassword]                  = useState('');
   const [error, setError]                        = useState('');
   const [modelsLoading, setModelsLoading]        = useState(true);
   const [loginLoading, setLoginLoading]          = useState(false);
@@ -63,7 +63,7 @@ export default function Login() {
         const descriptor = new Float32Array(data.faceDescriptor);
         setFaceDescriptor(descriptor);
         setFaceRegistered(true);
-        setPhase('done');
+        setPhase('face_login');
       } else {
         setFaceRegistered(false);
         setPhase('register');
@@ -130,13 +130,23 @@ export default function Login() {
       stopWebcam(streamRef.current);
       streamRef.current = null;
       setFaceRegistered(true);
-      setPhase('done');
+      setPhase('face_login');
     } catch (err) {
       console.error('[Login] Capture error:', err);
       setError('Lỗi khi xử lý khuôn mặt. Vui lòng thử lại.');
       setPhase('capturing');
     }
   }, [empId]);
+
+
+  const handleCancelRegistration = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setPhase('register');
+    setError('');
+  }, []);
 
   // ── Dọn dẹp camera khi unmount ──────────────────────────────────────────
   useEffect(() => {
@@ -161,32 +171,110 @@ export default function Login() {
     }
   };
 
-  // ── Đăng nhập ───────────────────────────────────────────────────────────
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // ── XÁC MINH KHUÔN MẶT ĐỂ ĐĂNG NHẬP ──────────────────────────────────────
+  const handleFaceLogin = async () => {
+    setPhase('verifying');
     setError('');
-    setLoginLoading(true);
+    
     try {
-      const res  = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          employeeId: empId,
-          password: password 
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data.error || 'Mã nhân viên hoặc mật khẩu không đúng');
-        return;
+      const { startWebcam, detectFaceDescriptor, compareFaces, stopWebcam } = await import('@/lib/tracking/faceUtils');
+      
+      // Wait for video element to be rendered
+      let retries = 0;
+      while (!videoRef.current && retries < 10) {
+        await new Promise(r => setTimeout(r, 100));
+        retries++;
       }
-      try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
-      login(empId, email);
-    } catch {
-      setError('Lỗi kết nối. Vui lòng thử lại sau.');
+
+      if (!videoRef.current) {
+        throw new Error('Camera element not found');
+      }
+
+      const stream = await startWebcam(videoRef.current);
+      streamRef.current = stream;
+
+      // Wait for detection
+      let match = false;
+      let attempts = 0;
+      while (attempts < 5 && !match) {
+        const currentDescriptor = await detectFaceDescriptor(videoRef.current!);
+        if (currentDescriptor && faceDescriptor) {
+          const result = compareFaces(faceDescriptor, currentDescriptor);
+          if (result.match) match = true;
+        }
+        attempts++;
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      if (match) {
+        setPhase('done');
+        setLoginLoading(true);
+        // Bỏ qua password, gọi API auth với flag face_auth
+        const res = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employeeId: empId, face_auth: true }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          await login(empId, email);
+          try { await document.documentElement.requestFullscreen(); } catch {}
+        } else {
+          setError('Xác thực khuôn mặt thất bại trên server.');
+          setPhase('face_login');
+        }
+      } else {
+        setError('Khuôn mặt không khớp. Vui lòng thử lại.');
+        setPhase('face_login');
+      }
+      
+      if (streamRef.current) {
+        stopWebcam(streamRef.current);
+        streamRef.current = null;
+      }
+    } catch (err) {
+      console.error('[FaceLogin] Error:', err);
+      setError('Lỗi hệ thống khi xác minh khuôn mặt.');
+      setPhase('face_login');
     } finally {
       setLoginLoading(false);
     }
+  };
+
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) {
+      setError('Vui lòng nhập mật khẩu');
+      return;
+    }
+    setLoginLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: empId, password }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        await login(empId, email);
+        try { await document.documentElement.requestFullscreen(); } catch {}
+      } else {
+        setError(data.error || 'Mật khẩu không chính xác');
+      }
+    } catch (err) {
+      console.error('[PasswordLogin] Error:', err);
+      setError('Lỗi hệ thống khi đăng nhập bằng mật khẩu.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleFinalLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await handleFaceLogin();
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -225,9 +313,9 @@ export default function Login() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '28px' }}>
           <StepDot active={phase === 'enter_id'} completed={phase !== 'enter_id'} label="1. Mã NV" />
           <div style={{ width: '30px', height: '2px', background: phase !== 'enter_id' ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px' }} />
-          <StepDot active={!faceRegistered && phase !== 'enter_id'} completed={faceRegistered} label="2. Khuôn mặt" />
-          <div style={{ width: '30px', height: '2px', background: faceRegistered ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px' }} />
-          <StepDot active={faceRegistered} completed={false} label="3. Đăng nhập" />
+          <StepDot active={!faceRegistered && phase !== 'enter_id' && phase !== 'password_login'} completed={faceRegistered || phase === 'password_login'} label="2. Khuôn mặt" />
+          <div style={{ width: '30px', height: '2px', background: (faceRegistered || phase === 'password_login') ? '#10b981' : 'rgba(255,255,255,0.1)', borderRadius: '1px' }} />
+          <StepDot active={faceRegistered || phase === 'password_login'} completed={false} label="3. Đăng nhập" />
         </div>
 
         {/* ── BƯỚC 0: Nhập mã nhân viên ── */}
@@ -330,6 +418,30 @@ export default function Login() {
                   <Camera size={18} />
                   {modelsLoading ? 'Đang tải mô hình AI...' : 'Mở Camera để đăng ký'}
                 </button>
+                <button
+                  onClick={() => setPhase('password_login')}
+                  style={{
+                    width: '100%', padding: '12px', marginTop: '4px',
+                    background: 'none',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '12px',
+                    color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Bỏ qua, đăng nhập bằng mật khẩu
+                </button>
+                <button
+                  onClick={() => setPhase('enter_id')}
+                  style={{
+                    background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
+                    fontSize: '0.85rem', cursor: 'pointer', marginTop: '12px',
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  <ArrowLeft size={14} /> Quay lại bước nhập mã
+                </button>
               </>
             )}
 
@@ -374,6 +486,20 @@ export default function Login() {
                     : <><Camera size={18} /> Chụp ảnh đăng ký</>
                   }
                 </button>
+                <button
+                  onClick={handleCancelRegistration}
+                  disabled={phase === 'processing'}
+                  style={{
+                    width: '100%', padding: '12px', marginTop: '8px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '12px',
+                    color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.9rem',
+                    cursor: phase === 'processing' ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Hủy
+                </button>
               </>
             )}
 
@@ -392,10 +518,10 @@ export default function Login() {
         )}
 
         {/* ── BƯỚC 2: Đăng nhập ── */}
-        {faceRegistered && (
-          <>
+        {faceRegistered && (phase === 'face_login' || phase === 'verifying' || phase === 'done') && (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{
-              width: '100%', padding: '12px 16px', borderRadius: '10px', marginBottom: '20px',
+              width: '100%', padding: '12px 16px', borderRadius: '10px',
               background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               color: '#10b981', fontSize: '0.85rem',
@@ -404,108 +530,191 @@ export default function Login() {
                 <CheckCircle size={18} />
                 Mã NV: {empId}
               </div>
-              <button
+              <button 
                 onClick={handleReRegister}
-                style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
+                style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.8 }}
               >
-                Đăng ký lại mặt
+                Xóa khuôn mặt
               </button>
             </div>
-
-            <form onSubmit={handleLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
-                  Mã nhân viên
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <UserCircle size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input
-                    type="text"
-                    value={empId}
-                    readOnly
-                    style={{
-                      width: '100%', padding: '12px 12px 12px 40px',
-                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '10px', color: 'rgba(255,255,255,0.8)', outline: 'none',
-                      boxSizing: 'border-box', cursor: 'default',
-                    }}
-                  />
-                </div>
+            
+            {phase === 'face_login' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <button
+                  onClick={handleFaceLogin}
+                  disabled={loginLoading}
+                  style={{
+                    width: '100%', padding: '14px',
+                    background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                    border: 'none', borderRadius: '12px',
+                    color: 'white', fontWeight: 700, fontSize: '1rem',
+                    cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  }}
+                >
+                  <ScanFace size={20} />
+                  Xác thực khuôn mặt
+                </button>
+                <button
+                  onClick={() => setPhase('password_login')}
+                  style={{
+                    width: '100%', padding: '12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '12px',
+                    color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.9rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Sử dụng mật khẩu
+                </button>
+                <button
+                  onClick={() => setPhase('enter_id')}
+                  style={{
+                    background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
+                    fontSize: '0.85rem', cursor: 'pointer', marginTop: '12px',
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    textDecoration: 'underline', alignSelf: 'center'
+                  }}
+                >
+                  <ArrowLeft size={14} /> Quay lại bước nhập mã
+                </button>
               </div>
+            )}
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
-                  Email
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <Mail size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input
-                    type="email"
-                    value={email}
-                    readOnly
-                    style={{
-                      width: '100%', padding: '12px 12px 12px 40px',
-                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '10px', color: 'rgba(255,255,255,0.8)', outline: 'none',
-                      boxSizing: 'border-box', cursor: 'default',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
-                  Mật khẩu
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <KeyRound size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    style={{
-                      width: '100%', padding: '12px 12px 12px 40px',
-                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '10px', color: '#fff', outline: 'none',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {error && (
+            {phase === 'verifying' && (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: 1000, padding: '20px',
+                animation: 'psf-fade-in 0.3s ease-out'
+              }}>
                 <div style={{
-                  padding: '10px 14px', borderRadius: '10px',
-                  background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  color: '#fca5a5', fontSize: '0.85rem',
+                  background: 'rgba(15, 23, 42, 0.98)',
+                  border: '2px solid rgba(59, 130, 246, 0.3)',
+                  borderRadius: '32px',
+                  padding: '40px',
+                  maxWidth: '600px',
+                  width: '100%',
+                  textAlign: 'center',
+                  boxShadow: '0 40px 100px rgba(0, 0, 0, 0.8), 0 0 40px rgba(59, 130, 246, 0.1)',
+                  animation: 'psf-pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                 }}>
-                  <AlertCircle size={16} />{error}
+                  <h2 style={{ color: '#fff', marginBottom: '24px', fontSize: '1.5rem', fontWeight: 700 }}>Xác thực khuôn mặt</h2>
+                  <div style={{ position: 'relative', width: '100%', marginBottom: '24px' }}>
+                    <video
+                      ref={videoRef} autoPlay muted playsInline
+                      style={{
+                        width: '100%', borderRadius: '24px',
+                        border: '3px solid #3b82f6',
+                        transform: 'scaleX(-1)',
+                        maxHeight: '400px', objectFit: 'cover',
+                        boxShadow: '0 0 50px rgba(59, 130, 246, 0.4)'
+                      }}
+                    />
+                    <div style={{
+                      position: 'absolute', top: '50%', left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      width: '180px', height: '180px',
+                      border: '3px dashed rgba(59,130,246,0.8)',
+                      borderRadius: '50%', pointerEvents: 'none',
+                    }} />
+                  </div>
+                  <p style={{ textAlign: 'center', color: '#3b82f6', fontSize: '1.1rem', fontWeight: 600, animation: 'pulse 1.5s infinite' }}>Đang xác minh...</p>
+                  
+                  <style>{`
+                    @keyframes psf-fade-in { from { opacity: 0; } to { opacity: 1; } }
+                    @keyframes psf-pop-in { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+                  `}</style>
                 </div>
-              )}
+              </div>
+            )}
 
-              <button
-                type="submit"
-                disabled={loginLoading}
+            {error && (
+              <div style={{
+                width: '100%', padding: '12px', borderRadius: '10px',
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                color: '#fca5a5', fontSize: '0.85rem',
+              }}>
+                <AlertCircle size={16} />
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── BƯỚC 3: Đăng nhập bằng mật khẩu ── */}
+        {phase === 'password_login' && (
+          <form onSubmit={handlePasswordLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{
+              width: '100%', padding: '12px 16px', borderRadius: '10px',
+              background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+              display: 'flex', alignItems: 'center', gap: '10px',
+              color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem', marginBottom: '8px'
+            }}>
+              <UserCircle size={18} />
+              Mã NV: {empId}
+            </div>
+
+            <div style={{ position: 'relative' }}>
+              <KeyRound size={18} color="rgba(255,255,255,0.3)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="password"
+                placeholder="Nhập mật khẩu"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                autoFocus
                 style={{
-                  width: '100%', padding: '14px', marginTop: '4px',
-                  background: loginLoading ? 'rgba(59,130,246,0.4)' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                  border: 'none', borderRadius: '12px',
-                  color: 'white', fontWeight: 700, fontSize: '1rem',
-                  cursor: loginLoading ? 'not-allowed' : 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  boxShadow: loginLoading ? 'none' : '0 4px 20px rgba(59,130,246,0.4)',
+                  width: '100%', padding: '14px 14px 14px 44px',
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '12px', color: '#fff', fontSize: '1rem', outline: 'none',
+                  boxSizing: 'border-box',
                 }}
-              >
-                {loginLoading
-                  ? <><Loader size={18} style={{ animation: 'lgSpin 1s linear infinite' }} /> Đang xác thực...</>
-                  : <><LogIn size={18} /> Đăng nhập</>
-                }
-              </button>
-            </form>
-          </>
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loginLoading}
+              style={{
+                width: '100%', padding: '14px',
+                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                border: 'none', borderRadius: '12px',
+                color: 'white', fontWeight: 700, fontSize: '1rem',
+                cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(59,130,246,0.35)',
+              }}
+            >
+              {loginLoading ? 'Đang đăng nhập...' : 'Đăng nhập'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPhase(faceRegistered ? 'face_login' : 'register')}
+              style={{
+                background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.85rem',
+                cursor: 'pointer', marginTop: '8px', textAlign: 'center'
+              }}
+            >
+              Quay lại xác thực khuôn mặt
+            </button>
+
+            {error && (
+              <div style={{
+                width: '100%', padding: '12px', borderRadius: '10px',
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                color: '#fca5a5', fontSize: '0.85rem',
+              }}>
+                <AlertCircle size={16} />
+                {error}
+              </div>
+            )}
+          </form>
         )}
       </div>
 

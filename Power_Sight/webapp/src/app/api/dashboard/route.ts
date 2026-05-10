@@ -7,8 +7,20 @@ const supabase = createClient(
 );
 
 // Simple in-memory cache to dramatically improve dashboard load times
-const CACHE: Record<string, { data: any, timestamp: number }> = {};
+let CACHE: Record<string, { data: any, timestamp: number }> = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+export function clearDashboardCache(employeeId?: string) {
+  if (employeeId) {
+    // Clear only for this employee
+    Object.keys(CACHE).forEach(key => {
+      if (key.startsWith(`${employeeId}-`)) delete CACHE[key];
+    });
+  } else {
+    CACHE = {};
+  }
+  console.log(`[Cache] Dashboard cache cleared ${employeeId ? `for ${employeeId}` : 'globally'}`);
+}
 
 export async function GET(req: Request) {
   try {
@@ -59,8 +71,8 @@ export async function GET(req: Request) {
       return allData;
     }
 
-    const [sapData, kpiData, fraudData, sessionData] = await Promise.all([
-      fetchAllRows('sap_reality', '*'),
+    const [reportData, kpiData, fraudData, sessionData] = await Promise.all([
+      fetchAllRows('business_reports', '*'),
       fetchAllRows('kpi_data', '*'),
       fetchAllRows('fraud_events', '*'),
       fetchAllRows('browser_sessions', 'month,total_seconds')
@@ -68,27 +80,20 @@ export async function GET(req: Request) {
 
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     
-    const monthlyData = [];
-    let totalOrdersAll = 0;
-    let completedOrdersAll = 0;
-    let totalProfitAll = 0;
+    let totalReportsAll = 0;
+    let completedReportsAll = 0;
     let totalTargetAll = 0;
     let totalHoursAll = 0;
     let totalFraudAll = 0;
     let criticalAll = 0;
     let warningAll = 0;
 
+    const monthlyData: any[] = [];
+
     for (let m = 1; m <= 12; m++) {
-      const dSap = sapData.filter((d: any) => d.month === m);
-      
-      const rev = dSap.filter((d: any) => d.os === 'A').reduce((sum: number, d: any) => sum + Number(d.net_value || 0), 0);
-      
-      const completedRows = dSap.filter((d: any) => d.os === 'C' && d.ds === 'C');
-      const prof = completedRows.reduce((sum: number, d: any) => sum + Number(d.net_value || 0), 0);
-      
-      const uniqueOrders = new Set(dSap.map((d: any) => d.sales_doc));
-      const totalOrd = uniqueOrders.size;
-      const compOrd = new Set(completedRows.map((d: any) => d.sales_doc)).size;
+      const dReports = reportData.filter((d: any) => d.month === m);
+      const totalRep = dReports.length;
+      const compRep = dReports.filter((d: any) => d.status === 'completed').length;
 
       const mKpi = kpiData.filter((d: any) => d.month === m);
       const target = mKpi.reduce((sum: number, d: any) => sum + Number(d.kpi_value || 0), 0);
@@ -103,10 +108,8 @@ export async function GET(req: Request) {
 
       monthlyData.push({
         monthName: monthNames[m - 1],
-        revenue: rev,
-        profit: prof,
-        totalOrders: totalOrd,
-        completedOrders: compOrd,
+        totalReports: totalRep,
+        completedReports: compRep,
         target: target,
         hoursWorked: Number(hrs.toFixed(1)),
         fraudCritical: frC,
@@ -114,9 +117,8 @@ export async function GET(req: Request) {
         fraudTotal: frTotal
       });
 
-      totalOrdersAll += totalOrd;
-      completedOrdersAll += compOrd;
-      totalProfitAll += prof;
+      totalReportsAll += totalRep;
+      completedReportsAll += compRep;
       totalTargetAll += target;
       totalHoursAll += hrs;
       totalFraudAll += frTotal;
@@ -124,18 +126,17 @@ export async function GET(req: Request) {
       warningAll += frW;
     }
 
-    const completionRate = totalTargetAll > 0 ? (completedOrdersAll / totalTargetAll) * 100 : 0;
+    const completionRate = totalTargetAll > 0 ? (completedReportsAll / totalTargetAll) * 100 : 0;
 
     const responseData = {
       monthlyData,
       metrics: {
-        totalOrders: totalOrdersAll,
-        completedOrders: completedOrdersAll,
+        totalReports: totalReportsAll,
+        completedReports: completedReportsAll,
         totalHours: Number(totalHoursAll.toFixed(1)),
         totalFraud: totalFraudAll,
         criticalFraud: criticalAll,
         warningFraud: warningAll,
-        totalProfit: totalProfitAll,
         kpiTarget: totalTargetAll,
         completionRate: completionRate.toFixed(1)
       }

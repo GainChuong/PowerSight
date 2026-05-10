@@ -2,12 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Clock, BarChart2, Calendar, MessageSquare, UserCircle, Mail, HardDrive, Database, Orbit, ExternalLink, LogOut } from 'lucide-react';
+import { Clock, BarChart2, Calendar, MessageSquare, UserCircle, Mail, HardDrive, Database, Orbit, ExternalLink, LogOut, HelpCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useTour } from '@/context/TourContext';
 
 export default function Sidebar() {
   const pathname = usePathname();
   const { logout, employeeId } = useAuth();
+  const { startTour, isActive, toggleMinimized } = useTour();
+
+  const handleTourClick = () => {
+    if (isActive) {
+      toggleMinimized(false);
+    } else {
+      startTour();
+    }
+  };
 
   const predefinedTabs = [
     { path: '/tracker', name: 'Time Tracker', icon: Clock },
@@ -19,7 +29,6 @@ export default function Sidebar() {
   const allowedApps = [
     { id: 'gmail', name: 'Gmail', icon: Mail },
     { id: 'gdrive', name: 'Google Drive', icon: HardDrive },
-    { id: 'sap', name: 'SAP', icon: Database },
   ];
 
   return (
@@ -106,5 +115,6 @@ export default function Sidebar() {
          </button>
       </div>
     </div>
+
   );
 }

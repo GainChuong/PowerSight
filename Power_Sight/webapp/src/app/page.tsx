@@ -11,7 +11,7 @@ export default function KPIDashboard() {
   const { employeeId } = useAuth();
   const [selectedYear, setSelectedYear] = useState('2026');
   const [fromMonth, setFromMonth] = useState(1);
-  const [toMonth, setToMonth] = useState(12);
+  const [toMonth, setToMonth] = useState(4);
   
   const [rawMonthlyData, setRawMonthlyData] = useState<any[]>([]);
   const [rawMetrics, setRawMetrics] = useState<any>(null);
@@ -52,27 +52,25 @@ export default function KPIDashboard() {
     const data = rawMonthlyData.slice(start - 1, end);
     
     // Tính toán lại metrics dựa trên khoảng lọc
-    const totalOrders = data.reduce((sum, m) => sum + m.totalOrders, 0);
-    const completedOrders = data.reduce((sum, m) => sum + m.completedOrders, 0);
+    const totalReports = data.reduce((sum, m) => sum + m.totalReports, 0);
+    const completedReports = data.reduce((sum, m) => sum + m.completedReports, 0);
     const totalHours = data.reduce((sum, m) => sum + m.hoursWorked, 0);
     const totalFraud = data.reduce((sum, m) => sum + m.fraudTotal, 0);
     const criticalFraud = data.reduce((sum, m) => sum + m.fraudCritical, 0);
     const warningFraud = data.reduce((sum, m) => sum + m.fraudWarning, 0);
-    const totalProfit = data.reduce((sum, m) => sum + m.profit, 0);
     const kpiTarget = data.reduce((sum, m) => sum + m.target, 0);
     
-    const completionRate = kpiTarget > 0 ? ((completedOrders / kpiTarget) * 100).toFixed(1) : "0.0";
+    const completionRate = kpiTarget > 0 ? ((completedReports / kpiTarget) * 100).toFixed(1) : "0.0";
 
     return {
       filteredData: data,
       filteredMetrics: {
-        totalOrders,
-        completedOrders,
+        totalReports,
+        completedReports,
         totalHours: Number(totalHours.toFixed(1)),
         totalFraud,
         criticalFraud,
         warningFraud,
-        totalProfit,
         kpiTarget,
         completionRate
       }
@@ -80,8 +78,8 @@ export default function KPIDashboard() {
   }, [rawMonthlyData, fromMonth, toMonth]);
 
   const pieData = filteredMetrics ? [
-    { name: 'Completed', value: filteredMetrics.completedOrders },
-    { name: 'Remaining', value: Math.max(0, filteredMetrics.kpiTarget - filteredMetrics.completedOrders) }
+    { name: 'Completed', value: filteredMetrics.completedReports },
+    { name: 'Remaining', value: Math.max(0, filteredMetrics.kpiTarget - filteredMetrics.completedReports) }
   ] : [];
   const PIE_COLORS = ['#10b981', '#334155'];
 
@@ -101,7 +99,6 @@ export default function KPIDashboard() {
             onChange={(e) => setSelectedYear(e.target.value)}
             className="custom-select"
           >
-            <option value="2024">2024</option>
             <option value="2025">2025</option>
             <option value="2026">2026</option>
           </select>
@@ -132,23 +129,21 @@ export default function KPIDashboard() {
           {/* KPI Cards Row */}
           <div style={{ backgroundColor: '#1e293b', borderRadius: '10px', border: '1px solid #334155', padding: '20px', marginBottom: '20px' }}>
             <h3 style={{ color: '#94a3b8', fontSize: '13px', margin: '0 0 15px 0' }}>KEY PERFORMANCE INDICATORS</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '15px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' }}>
               
-              <KPICard title="ORDER COMPLETION" value={(filteredMetrics?.completedOrders || 0).toLocaleString()} color="#3b82f6" 
-                subtitle={`Completed: ${filteredMetrics?.completedOrders || 0} / Total: ${filteredMetrics?.totalOrders || 0}`} />
+              <KPICard title="REPORT PROCESSING" value={(filteredMetrics?.completedReports || 0).toLocaleString()} color="#3b82f6" 
+                subtitle={`Completed: ${filteredMetrics?.completedReports || 0} / Total: ${filteredMetrics?.totalReports || 0}`} />
               
               <KPICard title="TOTAL HOURS" value={filteredMetrics?.totalHours || "0"} color="#10b981" 
-                subtitle={`${filteredMetrics && filteredMetrics.totalHours > 0 ? (filteredMetrics.completedOrders / filteredMetrics.totalHours).toFixed(2) : 0} orders/hour`} />
+                subtitle={`${filteredMetrics && filteredMetrics.totalHours > 0 ? (filteredMetrics.completedReports / filteredMetrics.totalHours).toFixed(2) : 0} reports/hour`} />
               
               <KPICard title="FRAUD EVENTS" value={filteredMetrics?.totalFraud || "0"} color="#ef4444" 
                 subtitle={`Critical: ${filteredMetrics?.criticalFraud || 0} | Warning: ${filteredMetrics?.warningFraud || 0}`} />
               
               <KPICard title="KPI RATE" value={`${filteredMetrics?.completionRate || 0}%`} color="#8b5cf6" 
-                subtitle={`${filteredMetrics?.completedOrders || 0}/${filteredMetrics?.kpiTarget || 0} orders`} 
+                subtitle={`${filteredMetrics?.completedReports || 0}/${filteredMetrics?.kpiTarget || 0} reports`} 
                 progress={Number(filteredMetrics?.completionRate || 0)} />
               
-              <KPICard title="TOTAL PROFIT" value={(filteredMetrics?.totalProfit || 0).toLocaleString()} color="#f59e0b" 
-                subtitle={`Avg: ${filteredMetrics && filteredMetrics.completedOrders > 0 ? Math.round(filteredMetrics.totalProfit / filteredMetrics.completedOrders).toLocaleString() : 0} VND`} />
             
             </div>
           </div>
@@ -156,7 +151,7 @@ export default function KPIDashboard() {
           {/* Charts Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             
-            <ChartBox title="ORDERS BY MONTH">
+            <ChartBox title="REPORTS BY MONTH">
               <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={filteredData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -164,8 +159,8 @@ export default function KPIDashboard() {
                   <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
                   <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: 'white' }} />
                   <Legend wrapperStyle={{ fontSize: '12px', color: 'white' }} />
-                  <Line type="monotone" dataKey="totalOrders" name="Total Orders" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="completedOrders" name="Completed" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="totalReports" name="Total Reports" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="completedReports" name="Completed" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                 </LineChart>
               </ResponsiveContainer>
             </ChartBox>
@@ -218,25 +213,10 @@ export default function KPIDashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '12px', marginTop: '10px' }}>
-                {filteredMetrics?.completedOrders || 0} / {filteredMetrics?.kpiTarget || 0} orders ({filteredMetrics?.completionRate || 0}%)
+                {filteredMetrics?.completedReports || 0} / {filteredMetrics?.kpiTarget || 0} reports ({filteredMetrics?.completionRate || 0}%)
               </div>
             </ChartBox>
 
-            <div style={{ gridColumn: '1 / -1' }}>
-              <ChartBox title="REVENUE vs PROFIT COMPARISON">
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={filteredData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="monthName" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                    <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: 'white' }} formatter={(value: any) => new Intl.NumberFormat('vi-VN').format(Number(value) || 0) + ' VND'} />
-                    <Legend wrapperStyle={{ fontSize: '12px', color: 'white' }} />
-                    <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#f59e0b" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="profit" name="Profit" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartBox>
-            </div>
 
           </div>
         </>

@@ -1,14 +1,71 @@
+// VERSION: 2.2 - FIXED SYNTAX
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
+import imaps from 'imap-simple';
+import { simpleParser } from 'mailparser';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
-// Tính 8 chỉ số hiệu suất theo data_processor.py
+const imapConfig = {
+  imap: {
+    user: process.env.EMAIL_USER || '',
+    password: process.env.EMAIL_PASS || '',
+    host: 'imap.gmail.com',
+    port: 993,
+    tls: true,
+    authTimeout: 5000
+  }
+};
+
+async function fetchLatestReportEmail() {
+  try {
+    const connection = await imaps.connect(imapConfig);
+    await connection.openBox('INBOX');
+    const searchCriteria = ['ALL'];
+    const fetchOptions = {
+      bodies: ['HEADER', 'TEXT', ''],
+      struct: true
+    };
+    const messages = await connection.search(searchCriteria, fetchOptions);
+    if (messages.length === 0) {
+      connection.end();
+      return null;
+    }
+    const latestMessage = messages[messages.length - 1];
+    const all = latestMessage.parts.find(part => part.which === '');
+    const mail = await simpleParser(all?.body);
+    connection.end();
+    return {
+      subject: mail.subject,
+      from: mail.from?.text,
+      text: mail.text,
+      date: mail.date
+    };
+  } catch (err) {
+    console.error('IMAP Error:', err);
+    return null;
+  }
+}
+async function fetchGoogleSheetCSV(sheetId: string) {
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+    const response = await fetch(url);
+    if (!response.ok) return 'Không thể tải dữ liệu. Hãy đảm bảo Sheet ở chế độ "Bất kỳ ai có liên kết đều có thể xem".';
+    return await response.text();
+  } catch (err) {
+    return 'Lỗi kết nối khi tải Sheet.';
+  }
+}
+
+function extractSheetId(text: string): string | null {
+  const match = text.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : null;
+}
+
+const STANDARD_SHEET_ID = '12ZSvldy-OpiALVzpMY_rlNYJbLE1hl8LIa2tTNHUmMc';
+
 async function computeMetrics(employeeId: string, year: number) {
   const fetchAllRows = async (table: string, columns: string) => {
     let allData: any[] = [];
@@ -16,12 +73,7 @@ async function computeMetrics(employeeId: string, year: number) {
     const limit = 1000;
     let hasMore = true;
     while (hasMore) {
-      const { data, error } = await supabase
-        .from(table)
-        .select(columns)
-        .eq('emp_id', employeeId)
-        .eq('year', year)
-        .range(from, from + limit - 1);
+      const { data, error } = await supabase.from(table).select(columns).eq('emp_id', employeeId).eq('year', year).range(from, from + limit - 1);
       if (error) throw error;
       if (data) {
         allData = allData.concat(data);
@@ -34,270 +86,162 @@ async function computeMetrics(employeeId: string, year: number) {
     return allData;
   };
 
-  const [sapData, kpiData, fraudData, sessionData] = await Promise.all([
-    fetchAllRows('sap_reality', '*'),
+  const [reportData, kpiData, fraudData, sessionData, latestEmail] = await Promise.all([
+    fetchAllRows('business_reports', '*'),
     fetchAllRows('kpi_data', '*'),
     fetchAllRows('fraud_events', '*'),
-    fetchAllRows('browser_sessions', '*')
+    fetchAllRows('browser_sessions', '*'),
+    fetchLatestReportEmail()
   ]);
 
-  // 1. Thời gian làm việc TB
   const totalSeconds = sessionData.reduce((sum, s) => sum + (s.total_seconds || 0), 0);
   const totalHours = totalSeconds / 3600;
   const sessionDays = new Set(sessionData.map(s => s.session_start?.split('T')[0])).size || 1;
   const avgWorkTime = totalHours / sessionDays;
 
-  // 2. Tỷ lệ hoàn thành đơn
-  const salesDocs = Array.from(new Set(sapData.map(d => d.sales_doc)));
-  const totalOrders = salesDocs.length;
-  const completedRows = sapData.filter(d => d.os === 'C' && d.ds === 'C');
-  const completedDocs = Array.from(new Set(completedRows.map(d => d.sales_doc)));
-  const completedOrders = completedDocs.length;
-  const orderCompletionRate = totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 0;
+  const totalReports = reportData.length;
+  const completedReportsData = reportData.filter(d => d.status === 'completed');
+  const completedReports = completedReportsData.length;
+  const reportCompletionRate = totalReports > 0 ? (completedReports / totalReports) * 100 : 0;
 
-  // 3. Lợi nhuận ròng TB/đơn
-  const totalProfit = completedRows.reduce((sum, d) => sum + Number(d.net_value || 0), 0);
-  const avgProfit = completedOrders > 0 ? totalProfit / completedOrders : 0;
-
-  // 4. Tỷ lệ sửa đổi TB
-  let totalMods = 0;
-  completedDocs.forEach(doc => {
-    const rowsCount = sapData.filter(d => d.sales_doc === doc).length;
-    totalMods += (rowsCount - 1);
-  });
-  const avgModRate = completedOrders > 0 ? totalMods / completedOrders : 0;
-
-  // 5. Tần suất vi phạm
   const totalFraud = fraudData.length;
-  const violationFreq = totalHours > 0 ? totalFraud / totalHours : 0;
 
-  // 6. Tỷ lệ hoàn thành KPI
   const kpiTarget = kpiData.reduce((sum, d) => sum + Number(d.kpi_value || 0), 0);
-  const kpiCompletionRate = kpiTarget > 0 ? (completedOrders / kpiTarget) * 100 : 0;
+  const kpiCompletionRate = kpiTarget > 0 ? (completedReports / kpiTarget) * 100 : 0;
 
-  // 7. Thời gian làm việc hiệu quả
-  const effectiveTimeSec = sapData.length * 300;
-  const effectiveRatio = totalSeconds > 0 ? Math.min(effectiveTimeSec / totalSeconds, 1.0) : 0;
+  const totalProcessingTime = reportData.reduce((sum, d) => sum + (d.processing_time_sec || 0), 0);
+  const effectiveRatio = totalSeconds > 0 ? Math.min(totalProcessingTime / totalSeconds, 1.0) : 0;
 
-  // 8. Chu kỳ đơn hàng
-  let totalCycleHours = 0;
-  completedDocs.forEach(doc => {
-    const docRows = sapData.filter(d => d.sales_doc === doc).sort((a: any, b: any) => a.id - b.id);
-    const lastRow = docRows[docRows.length - 1];
-    if (lastRow && lastRow.cust_ref_date && lastRow.created_on) {
-      const diff = (new Date(lastRow.cust_ref_date).getTime() - new Date(lastRow.created_on).getTime()) / (1000 * 3600);
-      totalCycleHours += Math.abs(diff);
-    }
-  });
-  const avgCycleTime = completedOrders > 0 ? totalCycleHours / completedOrders : 0;
+  const recentReports = reportData.slice(-10).map(d => `- [${d.created_at}] Báo cáo #${d.report_id}: ${d.status}`).join('\n');
+  const recentViolations = fraudData.slice(-15).map(d => `- [${d.timestamp}] ${d.event_type} (${d.severity}): ${d.details}`).join('\n');
 
-  // 9. Detailed Context for AI
-  const recentOrders = sapData
-    .filter(d => d.os === 'C' && d.ds === 'C')
-    .slice(-10)
-    .map(d => `Đơn ${d.sales_doc}: Lợi nhuận ${Number(d.net_value).toLocaleString()} VND, Ngày ${d.created_on}`)
-    .join('\n');
+  const today = new Date().toISOString().split('T')[0];
+  const todayReports = reportData.filter(d => d.created_at?.startsWith(today));
+  const todayCompleted = todayReports.filter(d => d.status === 'completed').length;
+  const todayFraudEvents = fraudData.filter(d => d.timestamp?.startsWith(today));
+  const todayFraud = todayFraudEvents.length;
+  const todayViolationsSummary = todayFraudEvents.map(d => {
+    const time = d.timestamp ? d.timestamp.split('T')[1].split('.')[0] : 'N/A';
+    return `- [${time}] ${d.event_type}: ${d.details}`;
+  }).join('\n');
 
-  const recentViolations = fraudData
-    .slice(-5)
-    .map(d => `Vi phạm: ${d.event_type}, Mức độ: ${d.severity}, Ngày: ${d.timestamp}`)
-    .join('\n');
-
-  // Lọc đơn hàng chưa xử lý (unique by sales_doc)
-  const uniqueDocs = Array.from(new Set(sapData.map(d => d.sales_doc)));
-  const pendingOrders = uniqueDocs
-    .map(doc => {
-      const docRows = sapData.filter(d => d.sales_doc === doc);
-      const isPending = docRows.some(d => d.os !== 'C' || d.ds !== 'C');
-      if (isPending) {
-        const latest = docRows[docRows.length - 1];
-        return `Đơn ${doc}: Trạng thái ${latest.os}/${latest.ds}, Ngày tạo ${latest.created_on}`;
-      }
-      return null;
-    })
-    .filter(Boolean)
-    .slice(-10)
-    .join('\n');
+  const todaySessions = sessionData.filter(d => d.session_start?.startsWith(today));
+  const todaySeconds = todaySessions.reduce((sum, s) => sum + (s.total_seconds || 0), 0);
+  const todayHours = todaySeconds / 3600;
 
   return {
-    avgWorkTime, orderCompletionRate, avgProfit, avgModRate,
-    violationFreq, kpiCompletionRate, kpiTarget, effectiveRatio,
-    avgCycleTime, totalOrders, completedOrders, totalProfit, totalFraud,
-    recentOrders, recentViolations, pendingOrders
+    avgWorkTime, reportCompletionRate,
+    violationFreq: totalHours > 0 ? totalFraud / totalHours : 0,
+    kpiCompletionRate, kpiTarget, effectiveRatio,
+    totalReports, completedReports, totalFraud,
+    recentReports, recentViolations,
+    todayStats: {
+      reports: todayReports.length,
+      completed: todayCompleted,
+      fraud: todayFraud,
+      violations: todayViolationsSummary || 'Không có vi phạm trong hôm nay.',
+      hours: todayHours.toFixed(2)
+    },
+    latestEmailContent: latestEmail ? `Chủ đề: ${latestEmail.subject}\nNgười gửi: ${latestEmail.from}\nNội dung: ${latestEmail.text?.substring(0, 1000)}` : 'Không tìm thấy mail báo cáo gần đây.',
+    comparisonData: {
+      standard: await fetchGoogleSheetCSV(STANDARD_SHEET_ID),
+      userReport: latestEmail ? await (async () => {
+        const id = extractSheetId(latestEmail.text || '');
+        return id ? await fetchGoogleSheetCSV(id) : 'Không tìm thấy link Google Sheet trong email của bạn.';
+      })() : 'Chưa có email báo cáo để đối chiếu.'
+    }
   };
 }
 
-function detectIntent(message: string): 'suggestion' | 'support' | 'complaint' | 'general' | 'scenario_1' | 'scenario_2' | 'scenario_3' {
+function detectIntent(message: string): 'suggestion' | 'support' | 'complaint' | 'general' | 'scenario_1' | 'scenario_2' | 'scenario_3' | 'scenario_4' {
   const msg = message.toLowerCase();
-  
-  // Scenario specifics
-  if (msg.includes('đánh giá hiệu suất') && msg.includes('đầu năm')) return 'scenario_1';
-  if (msg.includes('vi phạm bao nhiêu lần') || msg.includes('hôm nay và những lỗi gì')) return 'scenario_2';
-  if (msg.includes('tối ưu và giảm sai sót') || msg.includes('xử lý báo cáo')) return 'scenario_3';
-
-  if (msg.includes('đề xuất') || msg.includes('khóa học') || msg.includes('phát triển') || msg.includes('học')) return 'suggestion';
-  if (msg.includes('hỗ trợ') || msg.includes('mã đơn') || msg.includes('chi tiết') || msg.includes('thông tin') || msg.includes('chưa xử lý') || msg.includes('pending') || msg.includes('đơn hàng')) return 'support';
-  if (msg.includes('khiếu nại') || msg.includes('vi phạm') || msg.includes('tại sao') || msg.includes('lỗi')) return 'complaint';
+  if (msg.includes('hiệu suất') && (msg.includes('đầu năm') || msg.includes('hiện tại'))) return 'scenario_1';
+  if (msg.includes('vi phạm') && (msg.includes('hôm nay') || msg.includes('ngày hôm nay'))) return 'scenario_2';
+  if (msg.includes('tối ưu') && (msg.includes('quy trình') || msg.includes('xử lý báo cáo'))) return 'scenario_3';
+  if (msg.includes('kiểm tra') || msg.includes('sai') || msg.includes('hoàn thiện') || msg.includes('đã gửi')) return 'scenario_4';
+  if (msg.includes('đề xuất') || msg.includes('khóa học') || msg.includes('phát triển')) return 'suggestion';
+  if (msg.includes('hỗ trợ') || msg.includes('chi tiết') || msg.includes('thông tin') || msg.includes('chưa xử lý')) return 'support';
+  if (msg.includes('khiếu nại') || msg.includes('tại sao') || msg.includes('lỗi')) return 'complaint';
   return 'general';
 }
 
 function buildSystemPrompt(employeeId: string, year: number, m: any, intent: string): string {
   const metricsSummary = `
-CHỈ SỐ HIỆU SUẤT CỦA ${employeeId} (${year}):
+CHỈ SỐ HIỆU SUẤT CỦA ${employeeId} (Từ đầu năm ${year} đến nay):
 - Thời gian làm việc TB: ${m.avgWorkTime.toFixed(2)} giờ/ngày
-- Tỷ lệ hoàn thành đơn: ${m.orderCompletionRate.toFixed(2)}%
-- Lợi nhuận ròng TB/đơn: ${m.avgProfit.toLocaleString()} VND
-- Tần suất vi phạm: ${m.violationFreq.toFixed(4)} lần/giờ
-- Tỷ lệ hoàn thành KPI: ${m.kpiCompletionRate.toFixed(2)}% (Mục tiêu: ${m.kpiTarget} đơn)
-- Chu kỳ đơn hàng: ${m.avgCycleTime.toFixed(2)} giờ
+- Tỷ lệ hoàn thành báo cáo: ${m.reportCompletionRate.toFixed(2)}% (Đã xử lý ${m.completedReports}/${m.totalReports} báo cáo)
+- Tần suất vi phạm tracker: ${m.violationFreq.toFixed(4)} lần/giờ
+- Tỷ lệ hoàn thành KPI: ${m.kpiCompletionRate.toFixed(2)}% (Mục tiêu: ${m.kpiTarget} báo cáo)
+
+TRẠNG THÁI HÔM NAY (${new Date().toLocaleDateString('vi-VN')}):
+- Số báo cáo đã xử lý: ${m.todayStats.completed}/${m.todayStats.reports}
+- Số giờ làm việc: ${m.todayStats.hours} giờ
+- Vi phạm ghi nhận: ${m.todayStats.fraud} lần
+
+DANH SÁCH VI PHẠM CHI TIẾT TRONG HÔM NAY:
+${m.todayStats.violations}
+
+DANH SÁCH VI PHẠM LỊCH SỬ (Gần nhất):
+${m.recentViolations || 'Không có vi phạm.'}
+
+HOẠT ĐỘNG XỬ LÝ BÁO CÁO GẦN ĐÂY:
+${m.recentReports || 'Không có hoạt động.'}
+`;
+  const standardResults = `
+BẢNG KẾT QUẢ CHUẨN (Dùng để đối chiếu):
+- Tổng số Báo cáo cần xử lý: 90
+- Yêu cầu: Hoàn thành 100%, thời gian xử lý tối ưu.
+
+DỮ LIỆU ĐỐI CHIẾU CHI TIẾT (Cho Scenario 3):
+1. BÁO CÁO CHUẨN (Dữ liệu gốc):
+${m.comparisonData.standard}
+
+2. BÁO CÁO CỦA NHÂN VIÊN (Trích xuất từ email mới nhất):
+${m.comparisonData.userReport}
 `;
 
-  const basePrompt = `Bạn là PowerSight AI – trợ lý hỗ trợ nhân viên chuyên nghiệp.
+  const basePrompt = `Bạn là PowerSight AI Advisor – trợ lý phân tích dữ liệu chuyên nghiệp.
 Nhân viên: ${employeeId}
-${metricsSummary}`;
+${metricsSummary}
+${standardResults}
 
-  if (intent === 'suggestion') {
-    return `${basePrompt}
-Dựa trên dữ liệu hiệu suất ở trên, hãy đề xuất các khóa học hoặc hướng phát triển phù hợp để cải thiện các chỉ số còn thấp (ví dụ: chu kỳ đơn hàng, tỷ lệ sửa đổi).
-Trả lời ngắn gọn, thân thiện, không dùng ký tự đặc biệt.`;
-  }
+QUY TẮC PHẢN HỒI:
+1. TRẢ LỜI ĐÚNG TRỌNG TÂM: Chỉ trả lời đúng khía cạnh người dùng hỏi. Không liệt kê các chỉ số khác nếu không được yêu cầu.
+2. DỰA TRÊN SỐ LIỆU: Luôn dẫn chứng bằng con số cụ thể từ dữ liệu trên.
+3. PHÂN TÍCH ĐỐI CHIẾU (SCENARIO 3): Nếu người dùng hỏi về tối ưu quy trình hoặc so sánh báo cáo, hãy đối chiếu "BÁO CÁO CHUẨN" và "BÁO CÁO CỦA NHÂN VIÊN". Chỉ rõ dòng nào, số nào bị lệch, thiếu trường thông tin nào và đưa ra lời khuyên sửa đổi cụ thể.
+4. NGẮN GỌN & CHUYÊN NGHIỆP: Trả lời bằng Tiếng Việt chuyên nghiệp, đi thẳng vào vấn đề. Không nhắc đến SAP, chỉ tập trung quy trình Gmail/Google Sheets.
+`;
 
-  if (intent === 'support') {
-    return `${basePrompt}
-DỮ LIỆU CHI TIẾT ĐỂ TRA CỨU:
-- sap_reality: Bảng dữ liệu đơn hàng SAP. Cột 'sales_doc' là Mã Đơn Hàng (ID). Cột 'os' (Order Status) và 'ds' (Delivery Status) dùng để xác định trạng thái. 'C' nghĩa là đã xong (Completed).
-- fraud_events (hoặc frau_alert): Bảng ghi nhận vi phạm.
-
-DANH SÁCH ĐƠN HÀNG GẦN ĐÂY:
-${m.recentOrders}
-
-DANH SÁCH ĐƠN HÀNG CHƯA XỬ LÝ (PENDING - Có os hoặc ds khác 'C'):
-${m.pendingOrders}
-
-YÊU CẦU:
-1. Khi nhân viên hỏi về đơn hàng chưa xử lý, hãy LIỆT KÊ CHÍNH XÁC CÁC MÃ ĐƠN (sales_doc) từ danh sách PENDING ở trên.
-2. Nêu rõ trạng thái os/ds của từng đơn để nhân viên biết cần làm gì.
-3. Nếu không có đơn nào trong danh sách PENDING, hãy báo cáo rằng tất cả đơn hàng đã được xử lý xong.
-Trình bày rõ ràng, chuyên nghiệp.`;
-  }
-
-  if (intent === 'complaint') {
-    return `${basePrompt}
-DỮ LIỆU VI PHẠM & ĐƠN HÀNG CHƯA HOÀN THÀNH:
-${m.recentViolations}
-${m.pendingOrders}
-
-Hãy giải thích minh bạch các vấn đề, dẫn chứng bằng mã đơn hoặc thời điểm cụ thể, không đổ lỗi.
-Hướng dẫn nhân viên cách hoàn thiện các đơn hàng đang thiếu hoặc cách giảm thiểu vi phạm trong tương lai.`;
-  }
-
-  if (intent === 'scenario_1') {
-    return `${basePrompt}
-NHIỆM VỤ CỦA BẠN: Phân tích cụ thể các chỉ số hiệu suất từ đầu năm dựa vào dữ liệu trên. 
-Nhấn mạnh vào Tỷ lệ hoàn thành đơn, Lợi nhuận và Thời gian làm việc. 
-Đưa ra nhận xét khách quan (có khen ngợi nếu tốt, có cảnh báo nếu kém).`;
-  }
-
-  if (intent === 'scenario_2') {
-    return `${basePrompt}
-DỮ LIỆU VI PHẠM GẦN ĐÂY:
-${m.recentViolations}
-
-NHIỆM VỤ CỦA BẠN: Dựa vào lịch sử vi phạm, báo cáo tình hình vi phạm trong ngày.
-LƯU Ý QUAN TRỌNG: Giải thích cho nhân viên hiểu rằng theo quy định của hệ thống PowerSight, việc mở bất kỳ tab hay ứng dụng nào KHÔNG thuộc danh sách cho phép (Gmail và Google Drive/Sheets) đều bị tính là vi phạm Tracker. Nếu họ đã copy lệnh Chatbot ra một tab ngoài để search, đó chính là nguyên nhân gây lỗi vi phạm.`;
-  }
-
-  if (intent === 'scenario_3') {
-    return `${basePrompt}
-NHIỆM VỤ CỦA BẠN: Đưa ra lời khuyên để tối ưu hóa quy trình xử lý báo cáo tài chính.
-LƯU Ý QUAN TRỌNG: Hãy cung cấp và khuyến nghị người dùng đối chiếu công việc với "Sheet Kết Quả Chuẩn" sau đây:
-Link Sheet Processed: https://docs.google.com/spreadsheets/d/12ZSvldy-OpiALVzpMY_rlNYJbLE1hl8LIa2tTNHUmMc/edit?usp=sharing
-
-Giải thích tại sao làm theo định dạng chuẩn này (tính tổng hàm SUM chính xác, dùng Conditional Formatting để cảnh báo số liệu bất thường, in đậm Header) lại giúp giảm sai sót.`;
-  }
-
-  return `${basePrompt}
-Hãy trả lời câu hỏi một cách thân thiện, chính xác dựa trên dữ liệu hiện có. Tập trung vào việc tạo động lực và hỗ trợ nhân viên đạt được KPI.`;
+  if (intent === 'scenario_1') return `${basePrompt}\nNHIỆM VỤ: PHÂN TÍCH HIỆU SUẤT TỔNG THỂ.`;
+  if (intent === 'scenario_2') return `${basePrompt}\nNHIỆM VỤ: KIỂM SÓT TUÂN THỦ.`;
+  if (intent === 'scenario_3') return `${basePrompt}\nNHIỆM VỤ: TỐI ƯU QUY TRÌNH.`;
+  if (intent === 'scenario_4') return `${basePrompt}\nNHIỆM VỤ: KIỂM TRA & XÁC THỰC BÁO CÁO.\nDỮ LIỆU MAIL MỚI NHẤT:\n${m.latestEmailContent}`;
+  return `${basePrompt}\nHỗ trợ nhân viên xử lý báo cáo.`;
 }
 
 export async function POST(request: Request) {
   try {
     const { sessionId, message, employeeId } = await request.json();
     const year = 2026;
-
-    if (!employeeId || !message) {
-      return NextResponse.json({ reply: 'Thiếu thông tin nhân viên hoặc tin nhắn.' }, { status: 400 });
-    }
-
-    // 1. Tạo session mới nếu chưa có
+    if (!employeeId || !message) return NextResponse.json({ reply: 'Thiếu thông tin.' }, { status: 400 });
     let activeSessionId = sessionId;
     if (!activeSessionId) {
-      const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
-      const { data: newSession, error } = await supabase
-        .from('chat_sessions')
-        .insert({ emp_id: employeeId, title })
-        .select('id')
-        .single();
-
-      if (error || !newSession) {
-        return NextResponse.json({ reply: 'Lỗi tạo phiên trò chuyện.' }, { status: 500 });
-      }
-      activeSessionId = newSession.id;
+      const { data: newSession } = await supabase.from('chat_sessions').insert({ emp_id: employeeId, title: message.substring(0, 50) }).select('id').single();
+      activeSessionId = newSession?.id;
     }
-
-    // 2. Lưu tin nhắn user vào DB
-    await supabase.from('chat_messages').insert({
-      session_id: activeSessionId,
-      role: 'user',
-      content: message
-    });
-
-    // 3. Lấy lịch sử tin nhắn từ DB
-    const { data: historyRows } = await supabase
-      .from('chat_messages')
-      .select('role, content')
-      .eq('session_id', activeSessionId)
-      .order('created_at', { ascending: true });
-
-    const history = (historyRows || []).slice(0, -1).map(r => ({
-      role: r.role,
-      parts: [{ text: r.content }]
-    }));
-
-    // 4. Tính toán metrics và tạo System Prompt
+    await supabase.from('chat_messages').insert({ session_id: activeSessionId, role: 'user', content: message });
+    const { data: historyRows } = await supabase.from('chat_messages').select('role, content').eq('session_id', activeSessionId).order('created_at', { ascending: true });
+    const history = (historyRows || []).slice(0, -1).map(r => ({ role: r.role, parts: [{ text: r.content }] }));
     const intent = detectIntent(message);
     const metrics = await computeMetrics(employeeId, year);
     const systemPrompt = buildSystemPrompt(employeeId, year, metrics, intent);
-
-    // 5. Sử dụng startChat với history
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      systemInstruction: systemPrompt,
-    });
-
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(message);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
+    const result = await model.startChat({ history }).sendMessage(message);
     const reply = result.response.text();
-
-    // 6. Lưu phản hồi của model vào DB
-    await supabase.from('chat_messages').insert({
-      session_id: activeSessionId,
-      role: 'model',
-      content: reply
-    });
-
-    // 7. Cập nhật thời gian session
-    await supabase
-      .from('chat_sessions')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', activeSessionId);
-
+    await supabase.from('chat_messages').insert({ session_id: activeSessionId, role: 'model', content: reply });
     return NextResponse.json({ reply, sessionId: activeSessionId });
-
-  } catch (error: any) {
+  } catch (error) {
     console.error('[Chat API Error]:', error);
-    return NextResponse.json({
-      reply: 'Xin lỗi, tôi gặp lỗi khi xử lý: ' + (error.message || 'Lỗi không xác định.')
-    }, { status: 500 });
+    return NextResponse.json({ reply: 'Hệ thống bận.' }, { status: 500 });
   }
 }

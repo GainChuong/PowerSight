@@ -7,10 +7,11 @@ import { useTracking } from '@/context/TrackingContext';
 import { useAuth } from '@/context/AuthContext';
 import { useState, useEffect, useRef } from 'react';
 
-export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: string; description: string; embeddable: boolean }> = {
+export const ALLOWED_APPS: Record<string, { name: string; url: string; pattern: string; icon: string; description: string; embeddable: boolean }> = {
   gmail: {
     name: 'Gmail',
     url: 'https://mail.google.com',
+    pattern: '*://mail.google.com/*',
     icon: '📧',
     description: 'Hệ thống email doanh nghiệp',
     embeddable: false,
@@ -18,6 +19,7 @@ export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: str
   gdrive: {
     name: 'Google Drive',
     url: 'https://drive.google.com',
+    pattern: '*://drive.google.com/*',
     icon: '📁',
     description: 'Lưu trữ và chia sẻ tài liệu',
     embeddable: false,
@@ -25,6 +27,7 @@ export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: str
   sap: {
     name: 'SAP',
     url: 'https://s36.gb.ucc.cit.tum.de/sap/bc/ui2/flp?sap-client=312&sap-language=EN#Shell-home',
+    pattern: '*://s36.gb.ucc.cit.tum.de/*',
     icon: '🏢',
     description: 'Hệ thống quản lý đơn hàng SAP',
     embeddable: false,
@@ -32,6 +35,7 @@ export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: str
   sheets: {
     name: 'Google Sheets',
     url: 'https://docs.google.com/spreadsheets',
+    pattern: '*://docs.google.com/spreadsheets/*',
     icon: '📊',
     description: 'Bảng tính Google Sheets',
     embeddable: false,
@@ -39,6 +43,7 @@ export const ALLOWED_APPS: Record<string, { name: string; url: string; icon: str
   docs: {
     name: 'Google Docs',
     url: 'https://docs.google.com/document',
+    pattern: '*://docs.google.com/document/*',
     icon: '📝',
     description: 'Tài liệu Google Docs',
     embeddable: false,
@@ -51,9 +56,25 @@ export default function ViewerPage() {
   const app = ALLOWED_APPS[appId];
   const { isRunning, seconds, startTracking } = useTracking();
   const { userEmail } = useAuth();
-  const [opened, setOpened] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
-  const [sessionStart, setSessionStart] = useState<Date | null>(null);
+  const [opened, setOpened] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(`viewer_${appId}_opened`) === 'true';
+    }
+    return false;
+  });
+  const [emailSent, setEmailSent] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(`viewer_${appId}_emailSent`) === 'true';
+    }
+    return false;
+  });
+  const [sessionStart, setSessionStart] = useState<Date | null>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem(`viewer_${appId}_sessionStart`);
+      return stored ? new Date(stored) : null;
+    }
+    return null;
+  });
   const openedRef = useRef(false);
 
   const formatTime = (totalSeconds: number) => {
@@ -68,7 +89,7 @@ export default function ViewerPage() {
       startTracking();
     }
 
-    if (app.id === 'gmail' && userEmail && !emailSent) {
+    if (appId === 'gmail' && userEmail && !emailSent) {
       // Trigger email send for the scenario
       fetch('/api/tour/send-report', {
         method: 'POST',
@@ -81,8 +102,38 @@ export default function ViewerPage() {
     setSessionStart(new Date());
     setOpened(true);
     openedRef.current = true;
-    window.open(app.url, '_blank', 'noopener');
+    
+    // Use the extension bridge to switch to an existing tab or open a new one
+    // This provides a more robust 'focus existing' behavior than window.open
+    window.postMessage({
+      source: 'powersight-webapp',
+      type: 'SWITCH_TAB',
+      url: app.url,
+      pattern: app.pattern
+    }, '*');
   };
+
+  // Sync ref with state on restore
+  useEffect(() => {
+    openedRef.current = opened;
+  }, [opened]);
+
+  // Persist state to sessionStorage across navigations
+  useEffect(() => {
+    sessionStorage.setItem(`viewer_${appId}_opened`, String(opened));
+  }, [appId, opened]);
+
+  useEffect(() => {
+    if (sessionStart) {
+      sessionStorage.setItem(`viewer_${appId}_sessionStart`, sessionStart.toISOString());
+    } else {
+      sessionStorage.removeItem(`viewer_${appId}_sessionStart`);
+    }
+  }, [appId, sessionStart]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`viewer_${appId}_emailSent`, String(emailSent));
+  }, [appId, emailSent]);
 
   // Listen for when user comes back to this tab
   useEffect(() => {
@@ -169,7 +220,7 @@ export default function ViewerPage() {
           {app.name}
         </h1>
         <p style={{ color: 'var(--text-muted)', lineHeight: '1.6', margin: 0 }}>
-          {app.description}. Ứng dụng sẽ mở trong tab mới. Thời gian làm việc của bạn sẽ được theo dõi tự động tại thanh phía trên.
+          {app.description}. Ứng dụng sẽ mở trong tab làm việc riêng. Thời gian làm việc của bạn sẽ được theo dõi tự động tại thanh phía trên.
         </p>
       </div>
 

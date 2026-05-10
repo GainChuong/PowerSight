@@ -20,30 +20,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const savedAuth = localStorage.getItem('power_sight_auth');
-      if (savedAuth) {
-        const parsed = JSON.parse(savedAuth);
-        // Kiểm tra version - nếu khác version hiện tại thì xóa session cũ
-        if (parsed.version !== AUTH_VERSION) {
-          localStorage.removeItem('power_sight_auth');
-          return;
-        }
-        const { id, email } = parsed;
-        if (id && typeof id === 'string' && id.trim().length > 0) {
-          setIsAuthenticated(true);
+    // RESET LOGIC: Nếu đây là một session mới (mở tab mới/refresh browser), 
+    // chúng ta xóa localStorage để ép user phải login lại từ đầu.
+    // Nhưng sau khi login, họ có thể thoải mái chuyển tab/page trong cùng session.
+    if (typeof window !== 'undefined' && !sessionStorage.getItem('ps_session_active')) {
+      localStorage.removeItem('power_sight_auth');
+      localStorage.removeItem('tracking_start_time');
+      localStorage.removeItem('tracking_is_running');
+      sessionStorage.setItem('ps_session_active', 'true');
+    }
+
+    // Tự động khôi phục session nếu có trong localStorage
+    const savedAuth = localStorage.getItem('power_sight_auth');
+    if (savedAuth) {
+      try {
+        const { id, email, version } = JSON.parse(savedAuth);
+        // Kiểm tra version để tránh lỗi cấu trúc data cũ
+        if (version === AUTH_VERSION) {
           setEmployeeId(id);
-          if (email) setUserEmail(email);
+          setUserEmail(email);
+          setIsAuthenticated(true);
         } else {
           localStorage.removeItem('power_sight_auth');
         }
+      } catch (e) {
+        console.error('Error parsing saved auth:', e);
+        localStorage.removeItem('power_sight_auth');
       }
-    } catch {
-      localStorage.removeItem('power_sight_auth');
     }
   }, []);
 
-  const login = (id: string, email: string) => {
+  const login = async (id: string, email: string) => {
+    console.log(`[Auth] Logging in user ${id}, triggering data reset for today...`);
+    
+    // 1. Reset database for today
+    try {
+      const resetRes = await fetch(`/api/tracker?employeeId=${id}`, { method: 'DELETE' });
+      if (!resetRes.ok) {
+        const errorData = await resetRes.json();
+        console.error('[Auth] Database reset failed:', errorData.error);
+      } else {
+        console.log('[Auth] Database today-data reset successfully.');
+      }
+    } catch (err) {
+      console.error('[Auth] Network error during reset:', err);
+    }
+
+    // 2. Reset extension and local counters
+    if (typeof window !== 'undefined') {
+      window.postMessage({ 
+        source: 'powersight-webapp', 
+        type: 'POWERSIGHT_COMMAND', 
+        command: 'RESET' 
+      }, '*');
+      
+      // Also dispatch a custom event for TrackingContext to immediately clear its local state
+      window.dispatchEvent(new CustomEvent('POWERSIGHT_RESET_LOCAL_STATE'));
+    }
+
     setIsAuthenticated(true);
     setEmployeeId(id);
     setUserEmail(email);
@@ -55,6 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmployeeId(null);
     setUserEmail(null);
     localStorage.removeItem('power_sight_auth');
+    if (typeof window !== 'undefined') {
+      Object.keys(sessionStorage)
+        .filter(k => k.startsWith('viewer_'))
+        .forEach(k => sessionStorage.removeItem(k));
+    }
   };
 
   return (

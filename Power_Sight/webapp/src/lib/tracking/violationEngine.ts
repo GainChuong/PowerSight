@@ -35,11 +35,14 @@ export async function logViolation(
   employeeId?: string,
   module: string = 'Web Client'
 ) {
-  console.warn(`[VIOLATION ENFORCED] Type: ${type}, Severity: ${severity}`, details);
-  
+  const ts = new Date().toISOString();
+  console.warn(
+    `%c⚠️ VIOLATION [${ts}]%c\nType: ${type}\nSeverity: ${severity}\nModule: ${module}\nEmployee: ${employeeId || 'EM001'}\nDetails: ${JSON.stringify(details, null, 2)}`,
+    'background: #dc2626; color: white; font-weight: bold; padding: 4px 8px; border-radius: 4px;',
+    'color: #f87171;'
+  );
+
   try {
-    // Call the centralized violation API
-    // This API handles all logging logic (currently Supabase)
     fetch('/api/tracker/violation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -53,11 +56,12 @@ export async function logViolation(
       })
     }).then(res => {
       if (res.ok) {
-        console.log(`✅ Violation saved via API: ${type}`);
+        console.log(`%c✅ Violation saved [${ts}]`, 'color: #22c55e; font-weight: bold;');
+        window.dispatchEvent(new CustomEvent('POWERSIGHT_VIOLATION_LOGGED', { detail: { type, severity } }));
       } else {
-        console.error(`❌ Violation API failed with status ${res.status}`);
+        console.error(`%c❌ Violation API failed [${ts}] Status: ${res.status}`, 'color: #ef4444; font-weight: bold;');
       }
-    }).catch(apiErr => console.error("Violation API call failed:", apiErr));
+    }).catch(apiErr => console.error(`%c❌ Violation API error [${ts}]`, 'color: #ef4444; font-weight: bold;', apiErr));
 
   } catch (error) {
     console.error("Violation engine failed to record violation:", error);
@@ -113,9 +117,8 @@ export function checkFacePolicy(faces: unknown[], isLoggedInEmployee: boolean) {
  * @param time Elapsed time
  * @param isLinear Is movement perfectly linear (scripted)
  */
-export function checkMousePolicy(distance: number, time: number, isLinear: boolean) {
-  // If mouse is moving in perfectly linear lines repeatedly or impossibly fast
-  if (isLinear && distance > 100) {
+export function checkMousePolicy(distance: number, _time: number, _isLinear: boolean) {
+  if (_isLinear && distance > 500) {
     logViolation('mouse_fake', 'critical', { reason: 'Artificial/scripted mouse movement detected' });
   }
 }

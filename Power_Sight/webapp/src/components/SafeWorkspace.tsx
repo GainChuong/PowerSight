@@ -18,7 +18,6 @@ export default function SafeWorkspace({ children }: { children: React.ReactNode 
       if (!isRunning) return;
 
       const now = Date.now();
-      // Throttle to max 20 fps (50ms) to improve stability and performance
       if (now - lastEventTimeRef.current < 50) return;
       lastEventTimeRef.current = now;
 
@@ -26,14 +25,14 @@ export default function SafeWorkspace({ children }: { children: React.ReactNode 
       const dy = e.clientY - lastY;
       const distance = Math.sqrt(dx * dx + dy * dy);
       const time = now - lastTime;
-      
-      if (Math.abs(dx) > 0 && Math.abs(dy) === 0) {
+
+      if (Math.abs(dx) > 10 && Math.abs(dy) === 0) {
           linearCount++;
       } else {
-          linearCount = 0;
+          linearCount = Math.max(0, linearCount - 1);
       }
 
-      if (linearCount > 20) {
+      if (linearCount > 200) {
          checkMousePolicy(distance, time, true);
          linearCount = 0;
       }

@@ -52,9 +52,6 @@
             <button id="ps-btn-gmail" class="ps-dropdown-item">
               <span class="ps-item-icon">📧</span> Gmail
             </button>
-            <button id="ps-btn-sap" class="ps-dropdown-item">
-              <span class="ps-item-icon">📊</span> SAP System
-            </button>
             <button id="ps-btn-drive" class="ps-dropdown-item">
               <span class="ps-item-icon">📁</span> Google Drive
             </button>
@@ -88,7 +85,6 @@
 
   const isSafeDomain = isLocalhost ||
     window.location.hostname.includes('google.com') ||
-    window.location.hostname.includes('sap.com') ||
     window.location.hostname.includes('gmail.com');
 
   function formatTime(totalSeconds) {
@@ -101,6 +97,23 @@
   // ---- Update UI from State ----
   let localTimerInterval = null;
   let localState = null;
+
+  // Bridge: Webpage -> Content Script -> Background Script
+  window.addEventListener('message', (event) => {
+    if (!isContextValid()) return;
+    // Only accept messages from our own site (localhost or production domain)
+    if (event.source !== window) return;
+    
+    if (event.data && event.data.source === 'powersight-webapp') {
+      if (event.data.type === 'SWITCH_TAB') {
+        console.log('[PowerSight] Bridging SWITCH_TAB request to background:', event.data.url);
+        sendMessage('SWITCH_TAB', { 
+          url: event.data.url, 
+          pattern: event.data.pattern 
+        });
+      }
+    }
+  });
 
   // Timestamp-based sync: store the base values received from background
   // so local ticking computes elapsed time from timestamps, not incrementing.
@@ -217,14 +230,45 @@
     }
   }
 
+  let mouseTrackerInterval = null;
+  let heartbeatInterval = null;
+
   function teardown() {
     // Clean up intervals and listeners when extension context is dead
     if (localTimerInterval) {
       clearInterval(localTimerInterval);
       localTimerInterval = null;
     }
+    if (mouseTrackerInterval) {
+      clearInterval(mouseTrackerInterval);
+      mouseTrackerInterval = null;
+    }
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
     console.warn('[PowerSight] Extension context invalidated — content script deactivated.');
   }
+
+  // ---- Presence Heartbeat ----
+  function startHeartbeat() {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    
+    heartbeatInterval = setInterval(() => {
+      if (!isContextValid()) { teardown(); return; }
+      
+      // If document has focus, we are "present"
+      if (document.hasFocus()) {
+        sendMessage('PRESENCE_HEARTBEAT', { 
+          url: window.location.href,
+          timestamp: Date.now()
+        });
+      }
+    }, 1000);
+  }
+
+  // Initialize heartbeat
+  startHeartbeat();
 
   // ---- Communication with Background ----
   function sendMessage(type, data) {
@@ -284,6 +328,14 @@
           // Also check FS status after state update to ensure UI matches
           checkFullscreen();
         }
+        if (msg.type === 'VIOLATION_LOGGED') {
+          console.log('[PowerSight] Violation logged by background, notifying webapp:', msg.violationType);
+          window.dispatchEvent(new CustomEvent('POWERSIGHT_VIOLATION_LOGGED', { 
+            detail: { type: msg.violationType } 
+          }));
+          // Also postMessage for broader compatibility with React context listeners
+          window.postMessage({ type: 'POWERSIGHT_VIOLATION_LOGGED', violationType: msg.violationType }, '*');
+        }
         if (msg.type === 'FACE_VERIFY_START') {
           showFaceVerificationModal();
           const isMainTab = window.location.href.includes('localhost:3000');
@@ -334,13 +386,6 @@
       sendMessage('SWITCH_TAB', { url: 'https://mail.google.com', pattern: '*://mail.google.com/*' });
     });
     
-    document.getElementById('ps-btn-sap').addEventListener('click', () => {
-      appsMenu.classList.remove('ps-show');
-      sendMessage('SWITCH_TAB', { 
-        url: 'https://s36.gb.ucc.cit.tum.de/sap/bc/ui2/flp?sap-client=312&sap-language=EN#Shell-home', 
-        pattern: '*://s36.gb.ucc.cit.tum.de/*' 
-      });
-    });
 
     document.getElementById('ps-btn-drive').addEventListener('click', () => {
       appsMenu.classList.remove('ps-show');
@@ -732,7 +777,8 @@
     });
 
     // Evaluate metrics every 5 seconds using AI Model
-    setInterval(() => {
+    mouseTrackerInterval = setInterval(() => {
+      if (!isContextValid()) { teardown(); return; }
       if (!localState || !localState.isRunning || !mouseProcessor || !xgbRunner.isReady) return;
       if (mouseEvents.length < 5) {
         mouseEvents = []; // Too few events, ignore
@@ -760,8 +806,8 @@
       if (features.TotalDistance > 10) {
         const anomalyProbability = xgbRunner.predict(features);
         
-        // Threshold for Binary Classification (0.5)
-        const isAnomaly = anomalyProbability > 0.5;
+        // Extremely relaxed threshold for Binary Classification (0.98)
+        const isAnomaly = anomalyProbability > 0.98;
         anomalyHistory.push(isAnomaly);
         
         // Keep only the last 12 evaluations (1 minute total)
@@ -772,8 +818,8 @@
         const anomalyCount = anomalyHistory.filter(Boolean).length;
         console.log(`[PowerSight] Mouse evaluated. Anomaly Probability: ${(anomalyProbability * 100).toFixed(1)}%. Window Score: ${anomalyCount}/${anomalyHistory.length}`);
 
-        // Trigger violation if at least 6 anomaly periods (30 seconds of fake mouse) are detected
-        if (anomalyCount >= 6) {
+        // Trigger violation only if 12 anomaly periods (60 seconds of near-perfect fake mouse) are detected
+        if (anomalyCount >= 12) {
           console.warn('[PowerSight] Sustained XGBoost Anomaly detected!', features);
           sendMessage('MOUSE_VIOLATION', { 
             reason: `Phát hiện hành vi chuột tự động (${anomalyCount}/${MAX_HISTORY} chu kỳ vi phạm)`, 

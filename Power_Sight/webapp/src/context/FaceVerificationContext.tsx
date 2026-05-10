@@ -20,10 +20,11 @@ interface FaceVerificationContextType {
 }
 
 // ─── Timing Config ────────────────────────────────────────────────────────────
-const FIRST_CHECK_MS  = 60 * 1000;          // 1 phút sau khi bắt đầu
-const RANDOM_MIN_MS   = 60 * 1000;          // 1 phút
-const RANDOM_MAX_MS   = 60 * 1000;          // 1 phút
-const RETRY_MS        = 30 * 1000;          // Thử lại sau 30 giây nếu thất bại
+// Scenario: Max 2 scans in 10 mins, not too close.
+const FIRST_CHECK_MS  = 3 * 60 * 1000;         // 3 minutes after start
+const RANDOM_MIN_MS   = 4 * 60 * 1000;         // Min 4 mins between scans
+const RANDOM_MAX_MS   = 6 * 60 * 1000;         // Max 6 mins between scans
+const RETRY_MS        = 60 * 1000;          // Retry after 1 min if failed
 
 function randomInterval(): number {
   return Math.floor(Math.random() * (RANDOM_MAX_MS - RANDOM_MIN_MS + 1)) + RANDOM_MIN_MS;

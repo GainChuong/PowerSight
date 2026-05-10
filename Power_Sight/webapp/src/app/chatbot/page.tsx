@@ -135,11 +135,11 @@ export default function Chatbot() {
   };
 
   const quickActions = [
-    { label: '📊 Hiệu suất', cmd: 'phân tích hiệu suất làm việc của tôi trong năm nay' },
+    { label: '📊 Hiệu suất năm 2026', cmd: 'Hiệu suất của tôi từ đầu năm tới hiện tại?' },
+    { label: '⚠️ Vi phạm hôm nay', cmd: 'Vi phạm của tôi ngày hôm nay là gì?' },
+    { label: '🚀 Tối ưu quy trình', cmd: 'Làm sao để tối ưu quy trình xử lý báo cáo của tôi?' },
     { label: '🎯 Mục tiêu KPI', cmd: 'mục tiêu KPI của tôi tháng này là bao nhiêu' },
-    { label: '💰 Lợi nhuận', cmd: 'lợi nhuận ròng trung bình mỗi đơn của tôi' },
-    { label: '⚠️ Vi phạm', cmd: 'tôi có những vi phạm nào gần đây không?' },
-    { label: '📧 Soạn email', cmd: 'hãy soạn giúp tôi một email khiếu nại về dữ liệu sai lệch' }
+    { label: '📧 Soạn email', cmd: 'hãy soạn giúp tôi một email báo cáo về tiến độ công việc' }
   ];
 
   const formatTime = (dateStr: string) => {
@@ -293,7 +293,7 @@ export default function Chatbot() {
                 Xin chào, {employeeId}!
               </h2>
               <p style={{ color: '#64748b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '400px' }}>
-                Tôi là PowerSight Assistant. Hãy hỏi tôi bất cứ điều gì về hiệu suất, KPI, vi phạm, hoặc soạn email hỗ trợ.
+                Tôi là PowerSight Assistant. Hãy hỏi tôi bất cứ điều gì về hiệu suất xử lý báo cáo, KPI, vi phạm tracker, hoặc đối chiếu kết quả làm việc với sheet chuẩn.
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginTop: '10px' }}>
                 {quickActions.map((action, i) => (
